@@ -121,6 +121,16 @@ actor WorkLimiter {
     @Published var soundFeedback = UserDefaults.standard.object(forKey: "soundFeedback") as? Bool ?? true {
         didSet { if persistsPreferences { UserDefaults.standard.set(soundFeedback, forKey: "soundFeedback") } }
     }
+    @Published var hapticFeedback = UserDefaults.standard.object(forKey: "hapticFeedback") as? Bool ?? true {
+        didSet { if persistsPreferences { UserDefaults.standard.set(hapticFeedback, forKey: "hapticFeedback") } }
+    }
+    @Published var menuPreferences = WheelMenuPreferences() {
+        didSet {
+            if persistsPreferences, let data = try? JSONEncoder().encode(menuPreferences) {
+                UserDefaults.standard.set(data, forKey: "wheelMenuPreferences")
+            }
+        }
+    }
     @Published var wheelEnabled: Bool = UserDefaults.standard.object(forKey: "wheelEnabled") as? Bool ?? true {
         didSet { if persistsPreferences { UserDefaults.standard.set(wheelEnabled, forKey: "wheelEnabled") } }
     }
@@ -178,8 +188,7 @@ actor WorkLimiter {
     private var capabilityTask: Task<Void, Never>?
     private var isShuttingDown = false
 
-    init(persistPreferences: Bool = true,
-         fileActionCoordinator: FileActionCoordinator? = nil,
+    init(persistPreferences: Bool = true, fileActionCoordinator: FileActionCoordinator? = nil,
          resizePresenter: (any ResizeOptionsPresenting)? = nil,
          imagePresenter: (any ImageOptionsPresenting)? = nil,
          mediaPresenter: (any MediaOptionsPresenting)? = nil,
@@ -190,6 +199,8 @@ actor WorkLimiter {
         self.imagePresenterOverride = imagePresenter
         self.mediaPresenterOverride = mediaPresenter
         self.pdfPresenterOverride = pdfPresenter
+        if persistPreferences, let data = UserDefaults.standard.data(forKey: "wheelMenuPreferences"),
+           let saved = try? JSONDecoder().decode(WheelMenuPreferences.self, from: data) { menuPreferences = saved }
         let defaults = ShortcutBindings()
         var restored = defaults
         var used = Set<DragShortcut>()
@@ -248,12 +259,18 @@ actor WorkLimiter {
         dragShortcuts[mode]
     }
 
-    func choices(from capabilities: SelectionCapabilities, mode: WheelMode) -> [WheelChoice] {
+    func choices(from capabilities: SelectionCapabilities, mode: WheelMode, selectionCount: Int? = nil) -> [WheelChoice] {
         switch mode {
         case .convert:
             return capabilities.formats.map(WheelChoice.format)
-        case .tools: return capabilities.tools.map(WheelChoice.tool)
-        case .actions: return FileAction.allCases.map(WheelChoice.action)
+        case .tools:
+            return capabilities.tools.filter { tool in
+                capabilities.families.allSatisfy { menuPreferences.isEnabled(tool, for: $0) }
+            }.map(WheelChoice.tool)
+        case .actions:
+            return FileAction.allCases.filter { action in
+                menuPreferences.isEnabled(action) && (action != .createZip || (selectionCount ?? inputs.count) > 1)
+            }.map(WheelChoice.action)
         }
     }
 
@@ -261,7 +278,7 @@ actor WorkLimiter {
     /// format. The manual converter retains every supported output.
     func wheelChoices(from capabilities: SelectionCapabilities, inputs: [URL], mode: WheelMode) -> [WheelChoice] {
         guard mode == .convert, !inputs.isEmpty, capabilities.families.count == inputs.count, capabilities.families.allSatisfy({ $0 == .image }) else {
-            return choices(from: capabilities, mode: mode)
+            return choices(from: capabilities, mode: mode, selectionCount: inputs.count)
         }
         func normalized(_ url: URL) -> String {
             switch url.pathExtension.lowercased() {
@@ -273,7 +290,8 @@ actor WorkLimiter {
         }
         let sourceFormats = Set(inputs.map(normalized))
         let order: [OutputFormat] = [.jpeg, .png, .webp, .heic, .tiff, .avif, .bmp, .pdf]
-        return order.filter { capabilities.formats.contains($0) && !(sourceFormats.count == 1 && sourceFormats.contains($0.rawValue)) }.map(WheelChoice.format)
+        let all = order + capabilities.formats.filter { !order.contains($0) }
+        return all.filter { capabilities.formats.contains($0) && !(sourceFormats.count == 1 && sourceFormats.contains($0.rawValue)) }.map(WheelChoice.format)
     }
 
     func chooseFiles() {

@@ -16,6 +16,8 @@ struct PreferencesView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             formats
                 .tabItem { Label("Formats", systemImage: "doc.on.doc") }
+            menus
+                .tabItem { Label("Menus", systemImage: "circle.grid.2x2") }
             compatibility
                 .tabItem { Label("Compatibility", systemImage: "checkmark.shield") }
             about
@@ -58,6 +60,7 @@ struct PreferencesView: View {
                 Toggle("Enable Finder drag wheels", isOn: $model.wheelEnabled)
                 Toggle("Launch Orange when I log in", isOn: Binding(get: { login.enabled || login.requiresApproval }, set: { login.setEnabled($0) }))
                 Toggle("Soft selection sounds", isOn: $model.soundFeedback)
+                Toggle("Subtle hover haptics", isOn: $model.hapticFeedback)
                 Toggle("Reveal finished files in Finder", isOn: $model.revealOnCompletion)
                 if login.requiresApproval {
                     Button("Approve in Login Items Settings") { login.openLoginItemsSettings() }
@@ -98,6 +101,35 @@ struct PreferencesView: View {
             }
         }
         .pickerStyle(.menu)
+    }
+
+    private var menus: some View {
+        Form {
+            Section {
+                Text("Choose which tools appear when you tap Command. Available tools still depend on the selected file and installed converters.")
+                    .foregroundStyle(.secondary)
+                ForEach(WheelMenuPreferences.families, id: \.self) { family in
+                    DisclosureGroup(family.rawValue.capitalized) {
+                        ForEach(WheelMenuPreferences.tools(for: family), id: \.self) { tool in
+                            Toggle(tool.label, isOn: Binding(
+                                get: { model.menuPreferences.isEnabled(tool, for: family) },
+                                set: { model.menuPreferences.setEnabled($0, tool: tool, family: family) }))
+                        }
+                    }
+                }
+            } header: { Text("Command · tools by file type") }
+            Section {
+                ForEach(FileAction.allCases, id: \.self) { action in
+                    Toggle(action.label, isOn: Binding(
+                        get: { model.menuPreferences.isEnabled(action) },
+                        set: { model.menuPreferences.setEnabled($0, action: action) }))
+                }
+            } header: { Text("Control · actions for all files") }
+              footer: { Text("Create ZIP appears when multiple items are selected. Shift always offers supported conversions; it has no visibility filters.") }
+            Section {
+                Button("Show all tools and actions") { model.menuPreferences = WheelMenuPreferences() }
+            }
+        }.formStyle(.grouped)
     }
 
     private var formats: some View {
@@ -160,7 +192,7 @@ struct PreferencesView: View {
             } header: {
                 Text("Audio & video")
             } footer: {
-                Text("Requires optional FFmpeg. Snapshot uses the trim start as its frame time. These conversion values apply for this session and reset when Orange restarts.")
+                Text("Timeline tools open a preview before export. These values are starting preferences for the session; confirm each file's time range or speed in its tool window.")
             }
         }
         .formStyle(.grouped)
@@ -192,7 +224,7 @@ struct PreferencesView: View {
             }
 
             Section("Not available yet") {
-                Text("Pages, EPUB, PowerPoint and XLS/XLSX/ODS conversion; PDF compression; animated-image conversion; full Tangerine feature parity.")
+                Text("Pages, EPUB, PowerPoint and XLS/XLSX/ODS conversion; animated-image conversion; full Tangerine feature parity.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }

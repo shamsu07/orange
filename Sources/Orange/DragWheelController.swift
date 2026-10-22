@@ -28,6 +28,7 @@ struct DragWheelInput {
 
     private let model: AppModel
     private let feedback = WheelFeedback()
+    private let haptics = WheelHaptics()
     private let trace = WheelActivationTrace.makeIfEnabled()
     private let capabilityLoader: @Sendable ([URL]) -> SelectionCapabilities
     private let afterDragCallback: @MainActor (@escaping @MainActor @Sendable () -> Void) -> Void
@@ -334,8 +335,9 @@ struct DragWheelInput {
                 view.onDiagnostic = { [weak self] event, fields in self?.record(event, fields: fields) }
             }
             view.onHighlight = { [weak self] in
-                guard let self, self.model.soundFeedback else { return }
-                self.feedback.selection()
+                guard let self else { return }
+                if self.model.soundFeedback { self.feedback.selection() }
+                if self.model.hapticFeedback { self.haptics.selection() }
             }
             let panel = WheelPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
             panel.onClose = { [weak self] in self?.endDrag(reason: "panel_closed") }
@@ -435,6 +437,7 @@ struct DragWheelInput {
             if retiredSequences.count > 64 { retiredSequences.removeFirst() }
         }
         feedback.stop()
+        haptics.reset()
         panel?.orderOut(nil)
         wheelView?.reset()
         dragActive = false
