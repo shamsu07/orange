@@ -26,7 +26,7 @@ public enum DocumentConverter {
 
     public static func tools(for input: URL) -> [ToolKind] {
         guard input.pathExtension.lowercased() == "pdf" else { return [] }
-        return [.extractText, .splitPDF, .stripMetadata]
+        return [.compress, .extractText, .splitPDF, .stripMetadata]
     }
 
     public static func convert(_ input: URL, to format: OutputFormat, settings: ConversionSettings) throws -> ConversionResult {
@@ -48,12 +48,12 @@ public enum DocumentConverter {
         }
         switch tool {
         case .extractText: return try convertPDF(input, to: .txt, settings: settings)
-        case .splitPDF: return try splitPDF(input)
+        case .splitPDF: return try splitPDF(input, settings: settings)
         case .stripMetadata: return try stripPDFInformation(input)
         case .mergePDF:
             throw OrangeError.invalidInput("Select at least two PDFs to merge.")
         case .compress:
-            throw OrangeError.unsupported("PDF compression is unavailable: native rewriting cannot guarantee a smaller file without degrading its contents.")
+            return try reducePDF(input, settings: settings)
         default: throw OrangeError.unsupported("This tool is unavailable for PDF files.")
         }
     }
@@ -218,25 +218,141 @@ public enum DocumentConverter {
         return image
     }
 
-    private static func splitPDF(_ input: URL) throws -> ConversionResult {
+    /// Groups are 1-based page numbers. Each page must appear exactly once, in order.
+    /// Requiring an explicit partition prevents a long document silently becoming hundreds of files.
+    public static func validatedSplitGroups(_ requested: [[Int]]?, pageCount: Int) throws -> [[Int]] {
+        guard pageCount >= 2 else { throw OrangeError.invalidInput("This PDF has only one page to split.") }
+        let groups: [[Int]]
+        if let requested { groups = requested }
+        else if pageCount == 2 { groups = [[1], [2]] }
+        else { throw OrangeError.invalidInput("Choose where to split this PDF before continuing.") }
+        guard groups.count >= 2, groups.count <= pageCount,
+              groups.allSatisfy({ !$0.isEmpty }), groups.flatMap({ $0 }) == Array(1...pageCount) else {
+            throw OrangeError.invalidInput("Split ranges must include every page once, in order, across at least two PDFs.")
+        }
+        return groups
+    }
+
+    private static func splitPDF(_ input: URL, settings: ConversionSettings) throws -> ConversionResult {
         let document = try openPDF(input)
+        let groups = try validatedSplitGroups(settings.pdfPageRanges, pageCount: document.pageCount)
         var outputs: [URL] = []
         do {
-            for index in 0..<document.pageCount {
+            for (part, numbers) in groups.enumerated() {
                 try Task.checkCancellation()
-                guard let page = document.page(at: index)?.copy() as? PDFPage else {
-                    throw OrangeError.conversionFailed("A PDF page could not be copied.")
+                let section = PDFDocument()
+                section.documentAttributes = document.documentAttributes
+                for number in numbers {
+                    try Task.checkCancellation()
+                    guard let page = document.page(at: number - 1)?.copy() as? PDFPage else {
+                        throw OrangeError.conversionFailed("PDF page \(number) could not be copied.")
+                    }
+                    section.insert(page, at: section.pageCount)
                 }
-                let single = PDFDocument()
-                single.insert(page, at: 0)
-                single.documentAttributes = document.documentAttributes
-                outputs.append(try writePDF(single, beside: input, suffix: String(format: "-page-%03d", index + 1)))
+                let suffix = numbers.count == 1
+                    ? String(format: "-page-%03d", numbers[0])
+                    : String(format: "-part-%02d-pages-%03d-%03d", part + 1, numbers[0], numbers.last!)
+                outputs.append(try writePDF(section, beside: input, suffix: suffix))
             }
         } catch {
             for output in outputs { try? FileManager.default.removeItem(at: output) }
             throw error
         }
-        return ConversionResult(outputs: outputs, message: "Split \(outputs.count) pages into separate PDFs.")
+        return ConversionResult(outputs: outputs, message: "Split \(document.pageCount) pages into \(outputs.count) PDFs. Original preserved.")
+    }
+
+    public struct ReductionPreview: Sendable {
+        public let input: URL
+        public let candidate: URL
+        public let originalBytes: Int64
+        public let reducedBytes: Int64
+        public let pageCount: Int
+        public var isSmaller: Bool { reducedBytes > 0 && reducedBytes < originalBytes }
+        public func discard() { try? FileManager.default.removeItem(at: candidate) }
+    }
+
+    /// Builds a real, temporary PDF for a byte-size preview. It never publishes a user-visible copy.
+    /// Rasterization is deliberately explicit: text/vectors become pixels; links, forms and annotations are omitted.
+    public static func previewReduction(_ input: URL, dpi: Double, quality: Double, temporaryDirectory: URL? = nil) throws -> ReductionPreview {
+        try Task.checkCancellation()
+        guard dpi.isFinite, (36...300).contains(dpi), quality.isFinite, (0.1...1).contains(quality) else {
+            throw OrangeError.invalidInput("PDF reduction requires 36–300 DPI and image quality from 0.1 to 1.")
+        }
+        let document = try openPDF(input)
+        let originalBytes = Int64(try input.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0)
+        guard originalBytes > 0 else { throw OrangeError.invalidInput("The PDF is empty or unreadable.") }
+        let scratch = temporaryDirectory ?? FileManager.default.temporaryDirectory.appendingPathComponent("Orange/PDFPreviews", isDirectory: true)
+        try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
+        let candidate = scratch.appendingPathComponent("orange-pdf-preview-\(UUID().uuidString).pdf")
+        var succeeded = false
+        defer { if !succeeded { try? FileManager.default.removeItem(at: candidate) } }
+        var initialBox = CGRect(x: 0, y: 0, width: 612, height: 792)
+        let attributes = document.documentAttributes ?? [:]
+        var information: [CFString: Any] = [kCGPDFContextCreator: "Orange"]
+        if let author = attributes[PDFDocumentAttribute.authorAttribute] as? String { information[kCGPDFContextAuthor] = author }
+        if let title = attributes[PDFDocumentAttribute.titleAttribute] as? String { information[kCGPDFContextTitle] = title }
+        if let subject = attributes[PDFDocumentAttribute.subjectAttribute] as? String { information[kCGPDFContextSubject] = subject }
+        if let keywords = attributes[PDFDocumentAttribute.keywordsAttribute] as? [String] { information[kCGPDFContextKeywords] = keywords }
+        guard let context = CGContext(candidate as CFURL, mediaBox: &initialBox, information as CFDictionary) else {
+            throw OrangeError.conversionFailed("The reduced PDF could not be prepared.")
+        }
+        do {
+            for index in 0..<document.pageCount {
+                try Task.checkCancellation()
+                try autoreleasepool {
+                    guard let page = document.page(at: index), let reference = page.pageRef else {
+                        throw OrangeError.conversionFailed("PDF page \(index + 1) could not be read.")
+                    }
+                    let bounds = reference.getBoxRect(.cropBox)
+                    let rotated = page.rotation % 180 != 0
+                    var pageBox = CGRect(x: 0, y: 0, width: rotated ? bounds.height : bounds.width,
+                                         height: rotated ? bounds.width : bounds.height)
+                    let rendered = try renderPDFPage(page, maximumDPI: dpi, maximumDimension: 6_000)
+                    let encoded = NSMutableData()
+                    guard let writer = CGImageDestinationCreateWithData(encoded, UTType.jpeg.identifier as CFString, 1, nil) else {
+                        throw OrangeError.conversionFailed("The PDF image encoder could not be opened.")
+                    }
+                    CGImageDestinationAddImage(writer, rendered, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+                    guard CGImageDestinationFinalize(writer), let provider = CGDataProvider(data: encoded),
+                          let compressed = CGImage(jpegDataProviderSource: provider, decode: nil, shouldInterpolate: true, intent: .defaultIntent) else {
+                        throw OrangeError.conversionFailed("A PDF page image could not be encoded.")
+                    }
+                    let boxData = Data(bytes: &pageBox, count: MemoryLayout<CGRect>.size)
+                    context.beginPDFPage([kCGPDFContextMediaBox: boxData] as CFDictionary)
+                    context.draw(compressed, in: pageBox)
+                    context.endPDFPage()
+                }
+            }
+            context.closePDF()
+        } catch {
+            context.closePDF()
+            throw error
+        }
+        try Task.checkCancellation()
+        guard let verified = PDFDocument(url: candidate), verified.pageCount == document.pageCount,
+              let bytes = try candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize, bytes > 0 else {
+            throw OrangeError.conversionFailed("The reduced PDF could not be verified.")
+        }
+        succeeded = true
+        return ReductionPreview(input: input, candidate: candidate, originalBytes: originalBytes,
+                                reducedBytes: Int64(bytes), pageCount: document.pageCount)
+    }
+
+    public static func reducePDF(_ input: URL, settings: ConversionSettings, temporaryDirectory: URL? = nil) throws -> ConversionResult {
+        guard settings.pdfAllowsRasterization else {
+            throw OrangeError.invalidInput("Confirm image-based PDF reduction first. Text becomes pixels; links, forms and annotations are removed.")
+        }
+        let preview = try previewReduction(input, dpi: settings.pdfRasterDPI, quality: settings.pdfRasterQuality, temporaryDirectory: temporaryDirectory)
+        defer { preview.discard() }
+        guard preview.isSmaller else {
+            throw OrangeError.unsupported("This PDF is already compact at the selected quality. No larger copy was saved. Try a smaller quality preset or keep the original.")
+        }
+        let output = try OutputWriter.write(beside: input, extension: "pdf", suffix: "-reduced") { stage in
+            try FileManager.default.copyItem(at: preview.candidate, to: stage)
+        }
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return ConversionResult(outputs: [output], message: "Reduced \(formatter.string(fromByteCount: preview.originalBytes)) → \(formatter.string(fromByteCount: preview.reducedBytes)). Image-based PDF; text became pixels and interactive content was removed. Original preserved.")
     }
 
     private static func stripPDFInformation(_ input: URL) throws -> ConversionResult {

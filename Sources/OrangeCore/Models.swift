@@ -92,6 +92,10 @@ public struct ConversionSettings: Sendable {
     public var maxDimension: Int = 1920
     public var cropRect: NormalizedCropRect? = nil
     public var pdfMaxDimension: Int = 10_000
+    public var pdfPageRanges: [[Int]]? = nil
+    public var pdfRasterDPI: Double = 120
+    public var pdfRasterQuality: Double = 0.72
+    public var pdfAllowsRasterization: Bool = false
     public var trimStart: Double = 0
     public var trimEnd: Double? = nil
     public var speed: Double = 1
