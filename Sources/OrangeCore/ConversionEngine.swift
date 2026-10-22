@@ -43,7 +43,10 @@ public enum ConversionEngine {
     public static func commonTools(for inputs: [URL]) -> [ToolKind] {
         guard let first = inputs.first else { return [] }
         let remaining = inputs.dropFirst().map { Set(self.tools(for: $0)) }
-        var tools = tools(for: first).filter { tool in remaining.allSatisfy { $0.contains(tool) } }
+        let families = Set(inputs.map(FileFamily.detect))
+        var tools = tools(for: first).filter { tool in
+            (tool != .compress || families.count == 1) && remaining.allSatisfy { $0.contains(tool) }
+        }
         if inputs.count > 1 && inputs.allSatisfy({ FileFamily.detect($0) == .pdf }) { tools.append(.mergePDF) }
         return tools
     }

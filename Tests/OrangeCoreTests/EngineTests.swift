@@ -1,5 +1,7 @@
 import CoreGraphics
 import Foundation
+import ImageIO
+import UniformTypeIdentifiers
 import XCTest
 @testable import OrangeCore
 
@@ -37,6 +39,25 @@ final class EngineTests: XCTestCase {
         let text = directory.appendingPathComponent("notes.txt")
         try Data("notes".utf8).write(to: text)
         XCTAssertFalse(ConversionEngine.commonTools(for: [input, text]).contains(.mergePDF))
+    }
+
+    func testCompressionRemainsAvailableWithinAFamilyButNotAcrossImageAndPDF() throws {
+        let document = try pdf("document.pdf")
+        let image = directory.appendingPathComponent("image.jpg")
+        let bitmap = try XCTUnwrap(CGContext(data: nil, width: 16, height: 16, bitsPerComponent: 8, bytesPerRow: 64,
+                                            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(image as CFURL, UTType.jpeg.identifier as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, try XCTUnwrap(bitmap.makeImage()), nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        XCTAssertTrue(ConversionEngine.commonTools(for: [image]).contains(.compress))
+        XCTAssertTrue(ConversionEngine.commonTools(for: [document, document]).contains(.compress))
+
+        for selection in [[image, document], [document, image]] {
+            let tools = ConversionEngine.commonTools(for: selection)
+            XCTAssertFalse(tools.contains(.compress))
+            XCTAssertTrue(tools.contains(.stripMetadata))
+            XCTAssertTrue(tools.contains(.extractText))
+        }
     }
 
     private func pdf(_ name: String) throws -> URL {

@@ -47,6 +47,7 @@ private struct ShortcutBindings {
             if persistsPreferences, let data = try? JSONEncoder().encode(menuPreferences) {
                 UserDefaults.standard.set(data, forKey: "wheelMenuPreferences")
             }
+            if let selectedChoice, !choices.contains(selectedChoice) { self.selectedChoice = choices.first }
         }
     }
     @Published var wheelEnabled: Bool = UserDefaults.standard.object(forKey: "wheelEnabled") as? Bool ?? true {
@@ -238,7 +239,15 @@ private struct ShortcutBindings {
             self.selectedChoice = self.choices.first
         }
     }
-    func performSelected() { if let selectedChoice { perform(selectedChoice, urls: inputs) } }
+    func performSelected() {
+        guard let selectedChoice else { return }
+        guard choices.contains(selectedChoice) else {
+            self.selectedChoice = choices.first
+            showFeedback("Choose an available option.")
+            return
+        }
+        perform(selectedChoice, urls: inputs)
+    }
 
     func perform(_ choice: WheelChoice, urls: [URL]) {
         guard !isShuttingDown, !urls.isEmpty else { return }
@@ -264,6 +273,10 @@ private struct ShortcutBindings {
         }
         if case .tool(let tool) = operation {
             let families = Set(urls.map(FileFamily.detect))
+            if tool == .compress, families.count > 1 {
+                showFeedback("Select files of one type to choose compression quality: images, videos, audio or PDFs.")
+                return
+            }
             if families == [.image], [.compress, .crop].contains(tool) {
                 let base = settings
                 imageOptions.choose(tool, urls: urls, preferredSettings: base) { [weak self] result in

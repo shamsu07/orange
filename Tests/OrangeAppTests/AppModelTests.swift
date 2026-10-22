@@ -65,6 +65,55 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(floated, urls)
         await model.shutdown()
     }
+
+    @MainActor func testMixedFamilyCompressionRejectsEveryPairBeforePresentingOrQueuing() async throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent(".cache/tests/mixed-compression-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let fixtures: [(String, FileFamily)] = [("image.jpg", .image), ("video.mp4", .video),
+                                               ("audio.m4a", .audio), ("document.pdf", .pdf)]
+        let urls = try fixtures.map { name, family in
+            let url = root.appendingPathComponent(name)
+            try Data("untouched source".utf8).write(to: url)
+            XCTAssertEqual(FileFamily.detect(url), family)
+            return url
+        }
+        let presenter = CompressionRouteSpy()
+        let model = AppModel(persistPreferences: false, imagePresenter: presenter,
+                             mediaPresenter: presenter, pdfPresenter: presenter)
+        var progressRequests = 0
+        var feedbackRequests = 0
+        model.onShowProgress = { progressRequests += 1 }
+        model.onShowActionFeedback = { feedbackRequests += 1 }
+
+        for first in urls.indices {
+            for second in urls.indices where first != second {
+                model.perform(.tool(.compress), urls: [urls[first], urls[second]])
+                XCTAssertTrue(model.jobs.isEmpty, "A mixed selection must not partially process files.")
+                XCTAssertEqual(model.actionFeedback, "Select files of one type to choose compression quality: images, videos, audio or PDFs.")
+            }
+        }
+
+        XCTAssertEqual(feedbackRequests, 12)
+        XCTAssertEqual(progressRequests, 0)
+        XCTAssertEqual(presenter.requestCount, 0)
+        XCTAssertEqual(Set(try FileManager.default.contentsOfDirectory(atPath: root.path)), Set(fixtures.map(\.0)))
+        for url in urls { XCTAssertEqual(try Data(contentsOf: url), Data("untouched source".utf8)) }
+        await model.shutdown()
+    }
+}
+
+@MainActor private final class CompressionRouteSpy: ImageOptionsPresenting, MediaOptionsPresenting, PDFOptionsPresenting {
+    private(set) var requestCount = 0
+    func choose(_ tool: ToolKind, urls: [URL], preferredSettings: ConversionSettings,
+                completion: @escaping @MainActor (Result<ImageEditSelection?, Error>) -> Void) { requestCount += 1 }
+    func choose(_ urls: [URL], tool: ToolKind, settings: ConversionSettings,
+                completion: @escaping @MainActor (Result<[MediaSelection]?, Error>) -> Void) { requestCount += 1 }
+    func chooseSplit(_ urls: [URL], completion: @escaping @MainActor (Result<[PDFEditSelection]?, Error>) -> Void) { requestCount += 1 }
+    func chooseReduction(_ urls: [URL], completion: @escaping @MainActor (Result<[PDFEditSelection]?, Error>) -> Void) { requestCount += 1 }
+    func cancel() {}
+    func shutdown() async { cancel() }
 }
 
 @MainActor final class TestResizePresenter: ResizeOptionsPresenting {
