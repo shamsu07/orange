@@ -109,7 +109,7 @@ struct PreferencesView: View {
                 Text("Choose which tools appear when you tap Command. Available tools still depend on the selected file and installed converters.")
                     .foregroundStyle(.secondary)
                 ForEach(WheelMenuPreferences.families, id: \.self) { family in
-                    DisclosureGroup(family.rawValue.capitalized) {
+                    DisclosureGroup(family == .pdf ? "PDF" : family.rawValue.capitalized) {
                         ForEach(WheelMenuPreferences.tools(for: family), id: \.self) { tool in
                             Toggle(tool.label, isOn: Binding(
                                 get: { model.menuPreferences.isEnabled(tool, for: family) },

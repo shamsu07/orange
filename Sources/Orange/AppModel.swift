@@ -34,6 +34,7 @@ private struct ShortcutBindings {
     @Published var wheelAppearance = WheelAppearance(rawValue: UserDefaults.standard.string(forKey: "wheelAppearance") ?? "Glass") ?? .glass {
         didSet {
             if persistsPreferences { UserDefaults.standard.set(wheelAppearance.rawValue, forKey: "wheelAppearance") }
+            onVisualPreferencesChange?()
         }
     }
     @Published var soundFeedback = UserDefaults.standard.object(forKey: "soundFeedback") as? Bool ?? true {
@@ -68,6 +69,7 @@ private struct ShortcutBindings {
         set {
             storedWheelDiameter = Double(WheelGeometry(preferredDiameter: CGFloat(newValue)).diameter)
             if persistsPreferences { UserDefaults.standard.set(storedWheelDiameter, forKey: "wheelDiameter") }
+            onVisualPreferencesChange?()
         }
     }
     @Published var actionFeedback: String?
@@ -98,6 +100,7 @@ private struct ShortcutBindings {
 
     var onShowWindow: (() -> Void)?
     var onBeginFinderInteraction: (() -> Void)?
+    var onVisualPreferencesChange: (() -> Void)?
     var onShowProgress: (() -> Void)?
     var onPreviewWheel: (() -> Void)?
     var onFloat: (([URL]) -> Void)?

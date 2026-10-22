@@ -23,6 +23,7 @@ import OrangeCore
     private var inputs: [URL] = []
     private var mode: WheelMode = .convert
     private var wheelStyle: WheelAppearance = .glass
+    private var reduceTransparency = false
     private var diameter = WheelGeometry.defaultDiameter
     private var highlighted: Int?
     private var sectors: [(root: CALayer, color: CAGradientLayer, border: CAShapeLayer, text: CATextLayer, path: CGPath)] = []
@@ -49,22 +50,32 @@ import OrangeCore
 
     func configure(choices: [WheelChoice], mode: WheelMode, inputs: [URL], appearance: WheelAppearance,
                    diameter: CGFloat, preview: Bool, byteCount: Int64?, duringDrag: Bool = false,
-                   loading: Bool = false) {
-        let changed = self.allChoices != choices || self.mode != mode || self.inputs != inputs
-            || self.wheelStyle != appearance || self.diameter != diameter || isPreview != preview || isLoading != loading
+                   loading: Bool = false,
+                   reduceTransparency: Bool = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency) {
+        let contentChanged = self.allChoices != choices || self.mode != mode || self.inputs != inputs
+            || isPreview != preview || isLoading != loading
+        let resized = self.diameter != diameter
+        let changed = contentChanged || self.wheelStyle != appearance || resized || self.reduceTransparency != reduceTransparency
         // Rendering can be reused during capability refreshes, but a dismissed
         // picker must begin a new interaction even for the same selection.
         guard changed || sectors.isEmpty || interaction.phase == .inactive else { return }
         self.allChoices = choices
-        self.page = 0
         self.mode = mode
         self.inputs = inputs
         self.wheelStyle = appearance
+        self.reduceTransparency = reduceTransparency
         self.diameter = diameter
         self.isPreview = preview
         self.isLoading = loading
-        interaction.present(duringDrag: duringDrag, preview: preview)
-        highlighted = nil
+        if contentChanged || sectors.isEmpty || interaction.phase == .inactive {
+            page = 0
+            interaction.present(duringDrag: duringDrag, preview: preview)
+            highlighted = nil
+        } else if resized {
+            // A geometry change must not turn a pending press into a click on
+            // another target. Colors alone preserve the current interaction.
+            interaction.press(option: nil)
+        }
         if preview { centerLabel = "65 KB" }
         else if let byteCount {
             centerLabel = ByteCountFormatter.string(fromByteCount: byteCount, countStyle: .file)
@@ -155,6 +166,7 @@ import OrangeCore
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         let dark = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         let foreground: NSColor = dark ? .white : NSColor(calibratedWhite: 0.12, alpha: 1)
+        let surface = WheelSurfaceStyle(appearance: wheelStyle, dark: dark, reduceTransparency: reduceTransparency)
         let mask = CGMutablePath()
         let geometry = self.geometry
         for (index, choice) in choices.enumerated() {
@@ -168,10 +180,7 @@ import OrangeCore
             let localPath = path.copy(using: &localTransform) ?? path
             let base = CAGradientLayer()
             base.frame = sectorBounds
-            let opacity: CGFloat = wheelStyle == .solid ? 1 : 0.88
-            base.colors = dark
-                ? [NSColor(calibratedWhite: 0.29, alpha: opacity).cgColor, NSColor(calibratedWhite: 0.21, alpha: opacity).cgColor]
-                : [NSColor(calibratedWhite: 0.99, alpha: opacity).cgColor, NSColor(calibratedWhite: 0.85, alpha: opacity).cgColor]
+            base.colors = surface.sectorColors
             base.startPoint = CGPoint(x: 0.5, y: 1); base.endPoint = CGPoint(x: 0.5, y: 0)
             let baseMask = CAShapeLayer(); baseMask.path = localPath; base.mask = baseMask
             root.addSublayer(base)
@@ -224,7 +233,7 @@ import OrangeCore
         mask.addPath(pillPath)
         let center = CAShapeLayer()
         center.path = pillPath
-        center.fillColor = (dark ? NSColor(calibratedWhite: 0.40, alpha: 0.50) : NSColor.white.withAlphaComponent(0.55)).cgColor
+        center.fillColor = surface.centerColor
         center.strokeColor = NSColor.white.withAlphaComponent(0.28).cgColor
         center.lineWidth = 0.6
         layer.addSublayer(center)

@@ -35,7 +35,12 @@ struct DragWheelInput {
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var recoveryMonitor: Any?
+    private var keyboardMonitor: Any?
     private var deactivationObserver: NSObjectProtocol?
+    private var displayObserver: NSObjectProtocol?
+    private var renderedAppearance: WheelAppearance?
+    private var renderedDiameter: Double?
+    private var renderedReduceTransparency: Bool?
     private var panel: NSPanel?
     private var wheelView: WheelView?
     private var effectView: NSVisualEffectView?
@@ -63,6 +68,7 @@ struct DragWheelInput {
         self.model = model
         self.capabilityLoader = capabilityLoader
         self.afterDragCallback = afterDragCallback
+        model.onVisualPreferencesChange = { [weak self] in self?.refreshVisualPreferences() }
         record("controller.created", fields: ["version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "test"])
     }
 
@@ -77,11 +83,11 @@ struct DragWheelInput {
     func start() {
         guard globalMonitor == nil, localMonitor == nil else { return }
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp,
-                                          .flagsChanged, .rightMouseDown, .keyDown]
+                                          .flagsChanged, .rightMouseDown]
         globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: mask) { [weak self] event in
             MainActor.assumeIsolated { self?.handle(event, origin: "global") }
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask.union(.mouseMoved)) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: mask.union([.mouseMoved, .keyDown])) { [weak self] event in
             let cancel = MainActor.assumeIsolated {
                 let cancel = event.type == .keyDown && event.keyCode == 53 && self?.panel?.isVisible == true
                 self?.handle(event, origin: "local")
@@ -94,6 +100,9 @@ struct DragWheelInput {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.applicationDidDeactivate() }
         }
+        displayObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in MainActor.assumeIsolated { self?.refreshVisualPreferences() } }
         record("monitors.started", fields: ["global": globalMonitor != nil, "local": localMonitor != nil,
                                             "accessibilityTrusted": AXIsProcessTrusted(),
                                             "listenEventAccess": CGPreflightListenEventAccess()])
@@ -104,6 +113,8 @@ struct DragWheelInput {
         if let globalMonitor { NSEvent.removeMonitor(globalMonitor); self.globalMonitor = nil }
         if let localMonitor { NSEvent.removeMonitor(localMonitor); self.localMonitor = nil }
         if let deactivationObserver { NotificationCenter.default.removeObserver(deactivationObserver); self.deactivationObserver = nil }
+        if let displayObserver { NSWorkspace.shared.notificationCenter.removeObserver(displayObserver); self.displayObserver = nil }
+        model.onVisualPreferencesChange = nil
         let pending = Array(capabilityTasks.values)
         for task in pending { task.cancel() }
         for task in pending { await task.value }
@@ -159,6 +170,7 @@ struct DragWheelInput {
             suppressedUntilRelease = mouseIsDown
             return
         case .mouseDown:
+            if wheelView?.isPreview == true, panel?.frame.contains(lastPoint) != true { return }
             if wheelView?.isPicking == true || wheelView?.isPreview == true {
                 if panel?.frame.contains(lastPoint) == true {
                     record("input.rejected", fields: ["reason": "click_inside_picker"], input: input)
@@ -317,7 +329,7 @@ struct DragWheelInput {
         record("finish.picker_ready")
     }
 
-    private func show(mode: WheelMode, at location: NSPoint, preview: Bool = false) {
+    private func show(mode: WheelMode, at location: NSPoint, preview: Bool = false, preserveFocus: Bool = false) {
         record("presentation.requested", fields: ["requestedMode": mode.rawValue, "previewRequested": preview, "point": [location.x, location.y]])
         currentMode = mode
         let choices: [WheelChoice] = preview
@@ -352,7 +364,7 @@ struct DragWheelInput {
             panel.isReleasedWhenClosed = false
             let content = NSView()
             let effect = NSVisualEffectView()
-            effect.material = .hudWindow
+            effect.material = .popover
             effect.blendingMode = .behindWindow
             effect.state = .active
             effect.wantsLayer = true
@@ -393,45 +405,70 @@ struct DragWheelInput {
         else { feedback.stop() }
         let side = CGFloat(model.wheelDiameter) + 120
         let wasVisible = panel?.isVisible == true
-        panel?.styleMask = preview ? [.titled, .closable] : [.borderless, .nonactivatingPanel]
+        let previousFrame = panel?.frame
+        if !preserveFocus {
+            panel?.styleMask = preview ? [.titled, .closable] : [.borderless, .nonactivatingPanel]
+        }
         panel?.title = preview ? "Orange wheel preview" : "Orange file wheel"
         panel?.setContentSize(NSSize(width: side, height: side))
         panel?.contentView?.frame.size = NSSize(width: side, height: side)
         effectView?.frame = NSRect(x: 0, y: 0, width: side, height: side)
         wheelView?.frame = NSRect(x: 0, y: 0, width: side, height: side)
-        if !wasVisible {
-            let screen = NSScreen.screens.first(where: { NSMouseInRect(location, $0.frame, false) }) ?? NSScreen.main
+        if !wasVisible || previousFrame?.width != side {
+            let anchor = wasVisible ? previousFrame.map { NSPoint(x: $0.midX, y: $0.midY) } ?? location : location
+            let screen = NSScreen.screens.first(where: { NSMouseInRect(anchor, $0.frame, false) }) ?? NSScreen.main
             let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
-            panel?.setFrameOrigin(NSPoint(x: max(visible.minX, min(location.x - side / 2, visible.maxX - side)),
-                                         y: max(visible.minY, min(location.y - side / 2, visible.maxY - side))))
+            panel?.setFrameOrigin(NSPoint(x: max(visible.minX, min(anchor.x - side / 2, visible.maxX - side)),
+                                         y: max(visible.minY, min(anchor.y - side / 2, visible.maxY - side))))
         }
-        effectView?.isHidden = awaitingFiles || model.wheelAppearance == .solid
+        let reduceTransparency = NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
+        renderedAppearance = model.wheelAppearance
+        renderedDiameter = model.wheelDiameter
+        renderedReduceTransparency = reduceTransparency
+        effectView?.isHidden = awaitingFiles || model.wheelAppearance == .solid || reduceTransparency
         wheelView?.configure(choices: choices, mode: mode, inputs: inputs, appearance: model.wheelAppearance,
                              diameter: CGFloat(model.wheelDiameter), preview: preview,
                              byteCount: capabilities.singleFileByteCount, duringDrag: dragActive,
-                             loading: !preview && !awaitingFiles && !capabilitiesLoaded)
+                             loading: !preview && !awaitingFiles && !capabilitiesLoaded,
+                             reduceTransparency: reduceTransparency)
         // Keep the native drop receiver present without showing an empty wheel
         // over unrelated window/text drags. File data makes the artwork visible.
         wheelView?.layer?.opacity = awaitingFiles ? 0 : 1
         wheelView?.refreshAccessibility()
-        if preview {
+        if preview && !preserveFocus {
             panel?.makeKeyAndOrderFront(nil)
             panel?.makeFirstResponder(wheelView)
-        } else {
+        } else if !preserveFocus {
             panel?.orderFrontRegardless()
             if !dragActive {
                 panel?.makeKey()
                 panel?.makeFirstResponder(wheelView)
             }
         }
+        observeWheelKeyboard()
         record("presentation.completed", fields: ["awaitingFiles": awaitingFiles, "choices": choices.count,
                                                    "receiverWindowAtPoint": NSWindow.windowNumber(at: location, belowWindowWithWindowNumber: 0)])
+    }
+
+    private func refreshVisualPreferences() {
+        guard panel?.isVisible == true,
+              renderedAppearance != model.wheelAppearance || renderedDiameter != model.wheelDiameter
+                || renderedReduceTransparency != NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency else { return }
+        show(mode: currentMode, at: lastPoint, preview: wheelView?.isPreview == true, preserveFocus: true)
+    }
+
+    private func observeWheelKeyboard() {
+        guard globalMonitor != nil, keyboardMonitor == nil else { return }
+        keyboardMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated { self?.handle(event, origin: "wheel_keyboard") }
+        }
     }
 
     private func endDrag(reason: String) {
         record("gesture.ended", fields: ["reason": reason])
         generation &+= 1
         stopRecoveryMonitor()
+        if let keyboardMonitor { NSEvent.removeMonitor(keyboardMonitor); self.keyboardMonitor = nil }
         if let sequence = dragCapture.sequenceNumber {
             retiredSequences.append(sequence)
             if retiredSequences.count > 64 { retiredSequences.removeFirst() }
