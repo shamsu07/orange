@@ -147,8 +147,10 @@ actor WorkLimiter {
     private var resizePresenterOverride: (any ResizeOptionsPresenting)?
     private lazy var resizeOptions: any ResizeOptionsPresenting = resizePresenterOverride ?? ResizeOptionsCoordinator()
     private var imagePresenterOverride: (any ImageOptionsPresenting)?
+    private var mediaPresenterOverride: (any MediaOptionsPresenting)?
     private var pdfPresenterOverride: (any PDFOptionsPresenting)?
     private lazy var imageOptions: any ImageOptionsPresenting = imagePresenterOverride ?? ImageOptionsCoordinator()
+    private lazy var mediaOptions: any MediaOptionsPresenting = mediaPresenterOverride ?? MediaOptionsCoordinator()
     private lazy var pdfOptions: any PDFOptionsPresenting = pdfPresenterOverride ?? PDFOptionsCoordinator()
     private var persistsPreferences = true
     private lazy var fileActions: FileActionCoordinator = {
@@ -175,11 +177,13 @@ actor WorkLimiter {
          fileActionCoordinator: FileActionCoordinator? = nil,
          resizePresenter: (any ResizeOptionsPresenting)? = nil,
          imagePresenter: (any ImageOptionsPresenting)? = nil,
+         mediaPresenter: (any MediaOptionsPresenting)? = nil,
          pdfPresenter: (any PDFOptionsPresenting)? = nil) {
         self.persistsPreferences = persistPreferences
         self.actionCoordinatorOverride = fileActionCoordinator
         self.resizePresenterOverride = resizePresenter
         self.imagePresenterOverride = imagePresenter
+        self.mediaPresenterOverride = mediaPresenter
         self.pdfPresenterOverride = pdfPresenter
         let defaults = ShortcutBindings()
         var restored = defaults
@@ -335,6 +339,17 @@ actor WorkLimiter {
                 }
                 return
             }
+            if families.isSubset(of: [.video, .audio]), [.snapshot, .trim, .changeSpeed, .compress].contains(tool) {
+                mediaOptions.choose(urls, tool: tool, settings: settings) { [weak self] result in
+                    guard let self, !self.isShuttingDown else { return }
+                    switch result {
+                    case .success(let selections):
+                        for selection in selections ?? [] { self.enqueue(operation, urls: [selection.input], settings: selection.settings) }
+                    case .failure(let error): self.showFeedback(error.localizedDescription)
+                    }
+                }
+                return
+            }
             if families == [.pdf], [.splitPDF, .compress].contains(tool) {
                 let complete: @MainActor (Result<[PDFEditSelection]?, Error>) -> Void = { [weak self] result in
                     guard let self, !self.isShuttingDown else { return }
@@ -403,6 +418,7 @@ actor WorkLimiter {
         isShuttingDown = true
         resizeOptions.cancel()
         imageOptions.cancel()
+        mediaOptions.cancel()
         pdfOptions.cancel()
         fileActions.shutdown()
         capabilityTask?.cancel()

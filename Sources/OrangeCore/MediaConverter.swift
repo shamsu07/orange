@@ -2,6 +2,56 @@ import Foundation
 
 /// Media encoding is provided by a separately installed open-source FFmpeg build.
 public enum MediaConverter {
+    public struct SourceInfo: Sendable {
+        public let duration: Double?
+        public let hasVideo: Bool
+        public let hasAudio: Bool
+        public let width: Int?
+        public let height: Int?
+        public let frameRate: Double?
+        public let byteCount: Int64
+        public let videoCodec: String?
+        public let audioCodec: String?
+        public let audioChannels: Int?
+        public let audioSampleRate: Int?
+    }
+
+    /// Run on a worker: probing may start FFprobe. The same bounded, local-only
+    /// probe is used by the encoder, so preview and export inspect the same tracks.
+    public static func inspect(_ input: URL) throws -> SourceInfo {
+        let info = try probe(input, backend: backend())
+        let bytes = try input.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        return SourceInfo(duration: info.duration, hasVideo: info.video != nil, hasAudio: info.audio != nil,
+                          width: info.width, height: info.height, frameRate: info.frameRate, byteCount: Int64(bytes),
+                          videoCodec: info.videoCodec, audioCodec: info.audioCodec,
+                          audioChannels: info.audioChannels, audioSampleRate: info.audioSampleRate)
+    }
+
+    /// A bounded frame for the timeline, including formats AVPlayer cannot read.
+    /// The temporary PNG is never placed beside the original or kept on cancel.
+    public static func previewFrame(_ input: URL, at seconds: Double) throws -> Data {
+        let backend = try backend()
+        let info = try probe(input, backend: backend)
+        guard let video = info.video, seconds.isFinite, seconds >= 0,
+              info.duration.map({ seconds < $0 }) ?? true else {
+            throw OrangeError.invalidInput("Choose a time within this video.")
+        }
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent("orange-preview-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let output = directory.appendingPathComponent("frame.png")
+        let arguments = baseArguments + ["-ss", number(seconds), "-i", input.path, "-map", "0:\(video)",
+                                        "-frames:v", "1", "-filter:v", "scale=960:540:force_original_aspect_ratio=decrease",
+                                        "-c:v", "png", "-threads", String(workerCount), "-update", "1", output.path]
+        _ = try ProcessRunner.run(backend.ffmpeg, arguments: arguments, timeout: 15)
+        try Task.checkCancellation()
+        guard let values = try? output.resourceValues(forKeys: [.fileSizeKey]),
+              let size = values.fileSize, size > 0, size <= 8_000_000 else {
+            throw OrangeError.conversionFailed("This time does not contain a readable frame. Choose a slightly earlier time.")
+        }
+        return try Data(contentsOf: output)
+    }
+
     public static func formats(for input: URL) -> [OutputFormat] {
         guard let backend = try? backend(), let info = try? probe(input, backend: backend) else { return [] }
         return (info.video != nil ? videoFormats + audioFormats : audioFormats).filter {
@@ -95,8 +145,19 @@ public enum MediaConverter {
         default:
             throw OrangeError.unsupported("\(tool.label) is not supported for media files.")
         }
-        let message: String? = tool == .stripMetadata ? "Descriptive metadata removed. The container can retain technical fields required for playback."
-            : tool == .compress ? "Compression re-encodes at your selected quality; file size depends on the source." : nil
+        let message: String?
+        if tool == .stripMetadata {
+            message = "Descriptive metadata removed. The container can retain technical fields required for playback."
+        } else if tool == .compress,
+                  let originalSize = try? input.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  let outputSize = try? output.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+                  originalSize > 0 {
+            let before = ByteCountFormatter.string(fromByteCount: Int64(originalSize), countStyle: .file)
+            let after = ByteCountFormatter.string(fromByteCount: Int64(outputSize), countStyle: .file)
+            let change = Double(originalSize - outputSize) / Double(originalSize) * 100
+            let outcome = change > 0 ? "\(Int(change.rounded()))% smaller." : "This copy is \(Int((-change).rounded()))% larger at the selected quality."
+            message = "\(before) → \(after). \(outcome)"
+        } else { message = nil }
         return ConversionResult(outputs: [output], message: message)
     }
 
@@ -154,7 +215,18 @@ public enum MediaConverter {
         return EncodingBackend(ffmpeg: ffmpeg, encoders: encoders)
     }
 
-    private struct MediaInfo { let video: Int?; let audio: Int?; let duration: Double? }
+    private struct MediaInfo {
+        let video: Int?
+        let audio: Int?
+        let duration: Double?
+        let width: Int?
+        let height: Int?
+        let frameRate: Double?
+        let videoCodec: String?
+        let audioCodec: String?
+        let audioChannels: Int?
+        let audioSampleRate: Int?
+    }
 
     private static func probe(_ input: URL, backend: Backend, useCache: Bool = true) throws -> MediaInfo {
         guard input.isFileURL, let values = try? input.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey, .fileResourceIdentifierKey]),
@@ -170,7 +242,7 @@ public enum MediaConverter {
             if let cached { return cached }
         }
         let json = try ProcessRunner.run(backend.ffprobe, arguments: ["-v", "error", "-protocol_whitelist", "file,pipe", "-format_whitelist", inputFormats, "-show_entries",
-            "stream=index,codec_type,width,height:stream_disposition=attached_pic:format=duration", "-of", "json", input.path], timeout: 10)
+            "stream=index,codec_type,codec_name,width,height,avg_frame_rate,channels,sample_rate:stream_disposition=attached_pic:format=duration", "-of", "json", input.path], timeout: 10)
         guard let data = json.data(using: .utf8), let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let streams = object["streams"] as? [[String: Any]] else {
             throw OrangeError.invalidInput("FFmpeg could not identify this media file.")
@@ -186,7 +258,17 @@ public enum MediaConverter {
         }
         let rawDuration = (object["format"] as? [String: Any])?["duration"] as? String
         let duration = rawDuration.flatMap(Double.init).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
-        let info = MediaInfo(video: video?["index"] as? Int, audio: audio?["index"] as? Int, duration: duration)
+        let frameRate: Double? = (video?["avg_frame_rate"] as? String).flatMap { value in
+            let parts = value.split(separator: "/").compactMap { Double($0) }
+            guard parts.count == 2, parts[0].isFinite, parts[1].isFinite, parts[1] > 0 else { return nil }
+            let rate = parts[0] / parts[1]
+            return rate > 0 && rate <= 1_000 ? rate : nil
+        }
+        let info = MediaInfo(video: video?["index"] as? Int, audio: audio?["index"] as? Int, duration: duration,
+                             width: video?["width"] as? Int, height: video?["height"] as? Int, frameRate: frameRate,
+                             videoCodec: video?["codec_name"] as? String, audioCodec: audio?["codec_name"] as? String,
+                             audioChannels: audio?["channels"] as? Int,
+                             audioSampleRate: (audio?["sample_rate"] as? String).flatMap(Int.init))
         cacheLock.lock()
         if cachedMedia.count >= 128 { cachedMedia.removeAll(keepingCapacity: true) }
         cachedMedia[key] = info
