@@ -28,13 +28,13 @@ final class AppModelTests: XCTestCase {
         model.maxDimension = 16
         var panelsShown = 0
         model.onShowProgress = { panelsShown += 1 }
-        for tool in [ToolKind.rotate, .resize, .compress, .stripMetadata] { model.perform(.tool(tool), urls: [input]) }
+        for tool in [ToolKind.rotate, .resize, .stripMetadata] { model.perform(.tool(tool), urls: [input]) }
         resizePresenter.complete(.success(ResizeSelection(inputs: [input], maximumDimension: 16)))
         let deadline = Date().addingTimeInterval(10)
         while model.activeCount > 0 && Date() < deadline { try await Task.sleep(nanoseconds: 10_000_000) }
         XCTAssertEqual(model.activeCount, 0)
-        XCTAssertEqual(model.jobs.count, 4)
-        XCTAssertEqual(panelsShown, 4)
+        XCTAssertEqual(model.jobs.count, 3)
+        XCTAssertEqual(panelsShown, 3)
         for job in model.jobs {
             XCTAssertEqual(job.state, .complete, job.message ?? "No completion")
             let output = try XCTUnwrap(job.outputs.first)
@@ -73,7 +73,7 @@ final class AppModelTests: XCTestCase {
     private(set) var cancelCount = 0
     private var completion: (@MainActor (Result<ResizeSelection?, Error>) -> Void)?
 
-    func choose(_ urls: [URL], preferredMaximum: Int,
+    func choose(_ urls: [URL], preferredMaximum: Int, preferredSettings: ConversionSettings,
                 completion: @escaping @MainActor (Result<ResizeSelection?, Error>) -> Void) {
         requestedURLs = urls
         self.preferredMaximum = preferredMaximum

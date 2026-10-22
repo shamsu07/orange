@@ -5,7 +5,33 @@ import UniformTypeIdentifiers
 import Vision
 import CoreML
 
+/// A crop rectangle in the display-oriented image, measured from its top-left.
+public struct NormalizedCropRect: Sendable, Equatable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        self.x = x; self.y = y; self.width = width; self.height = height
+    }
+    public static let fullImage = Self(x: 0, y: 0, width: 1, height: 1)
+    public var isValid: Bool {
+        [x, y, width, height].allSatisfy(\.isFinite) && x >= 0 && y >= 0 && width > 0 && height > 0
+        && x + width <= 1.000_000_001 && y + height <= 1.000_000_001
+    }
+}
+
 public enum ImageConverter {
+    public struct EncodingPreview: Sendable, Equatable {
+        public let originalBytes: Int64
+        public let encodedBytes: Int64
+        public let dimensions: Dimensions
+        public var savesBytes: Bool { encodedBytes < originalBytes }
+        public init(originalBytes: Int64, encodedBytes: Int64, dimensions: Dimensions) {
+            self.originalBytes = originalBytes; self.encodedBytes = encodedBytes; self.dimensions = dimensions
+        }
+    }
+
     public struct Dimensions: Equatable, Sendable {
         public let width: Int
         public let height: Int
@@ -41,7 +67,7 @@ public enum ImageConverter {
 
     public static func tools(for input: URL) -> [ToolKind] {
         guard (try? open(input)) != nil else { return [] }
-        var result: [ToolKind] = [.resize, .rotate, .qrCode, .extractText]
+        var result: [ToolKind] = [.resize, .crop, .rotate, .qrCode, .extractText]
         if let format = originalFormat(input), formats(for: input).contains(format) {
             result.insert(.stripMetadata, at: 0)
             if [.jpeg, .heic].contains(format) { result.insert(.compress, at: 0) }
@@ -122,6 +148,10 @@ public enum ImageConverter {
                 result = try render(image, width: size.width, height: size.height)
             }
             suffix = "-resized"
+        case .crop:
+            guard let rectangle = settings.cropRect else { throw OrangeError.invalidInput("Choose the part of the image to keep first.") }
+            result = try crop(image, rectangle: rectangle)
+            suffix = "-cropped"
         case .rotate:
             result = try rotateClockwise(image)
             suffix = "-rotated"
@@ -137,8 +167,9 @@ public enum ImageConverter {
             throw OrangeError.unsupported("\(tool.label) is not supported for images.")
         }
         try Task.checkCancellation()
-        let output = try save(result, source: opened.source, input: input, format: format, settings: adjusted, suffix: suffix)
-        return ConversionResult(outputs: [output], message: tool == .compress ? "Compression uses your selected quality; file size depends on the source image." : nil)
+        let output = try save(result, source: opened.source, input: input, format: format, settings: adjusted,
+                              suffix: suffix, requireSavings: tool == .compress)
+        return ConversionResult(outputs: [output], message: tool == .compress ? "Compression changes encoding quality while keeping the same pixel dimensions." : nil)
     }
 
     private static let imageFormats: [OutputFormat] = [.jpeg, .png, .heic, .webp, .tiff, .bmp, .gif, .avif, .pdf]
@@ -285,56 +316,130 @@ public enum ImageConverter {
         return result
     }
 
+    /// Encodes the same pixels and settings as the eventual edit, into an isolated
+    /// temporary directory. The encoded file never appears beside the original.
+    public static func preview(_ tool: ToolKind, input: URL, settings: ConversionSettings,
+                               temporaryRoot: URL? = nil) throws -> EncodingPreview {
+        try validate(settings)
+        let opened = try open(input)
+        defer { CGImageSourceRemoveCacheAtIndex(opened.source, 0) }
+        let format = originalFormat(input) ?? .png
+        guard encoderAvailable(format) else { throw OrangeError.unsupported("This image format cannot be rewritten on this Mac.") }
+        var image = try decode(opened, maximumDimension: tool == .resize ? settings.maxDimension : nil)
+        switch tool {
+        case .resize:
+            let dimensions = try opened.dimensions.fitting(maximumDimension: settings.maxDimension)
+            guard dimensions != opened.dimensions else { throw OrangeError.invalidInput("Choose a smaller long edge to resize this image.") }
+            if image.width != dimensions.width || image.height != dimensions.height {
+                image = try render(image, width: dimensions.width, height: dimensions.height)
+            }
+        case .compress:
+            guard [.jpeg, .heic].contains(format) else { throw OrangeError.unsupported("Compression quality is available for JPEG and HEIC images.") }
+        case .crop:
+            guard let rectangle = settings.cropRect else { throw OrangeError.invalidInput("Choose a crop area first.") }
+            image = try crop(image, rectangle: rectangle)
+        default: throw OrangeError.unsupported("This tool does not support an encoding preview.")
+        }
+        let root = temporaryRoot ?? FileManager.default.temporaryDirectory
+        let folder = root.appendingPathComponent("orange-image-preview-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let output = folder.appendingPathComponent("preview.\(format.fileExtension)")
+        try Task.checkCancellation()
+        try encode(image, source: opened.source, to: output, format: format, settings: settings)
+        try Task.checkCancellation()
+        return EncodingPreview(originalBytes: Int64(try input.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0),
+                               encodedBytes: Int64(try output.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0),
+                               dimensions: Dimensions(width: image.width, height: image.height))
+    }
+
+    /// Orientation is baked into the thumbnail, matching the image used for crop.
+    public static func thumbnail(of input: URL, maximumDimension: Int = 1200) throws -> CGImage {
+        let opened = try open(input)
+        defer { CGImageSourceRemoveCacheAtIndex(opened.source, 0) }
+        return try decode(opened, maximumDimension: max(1, min(2000, maximumDimension)))
+    }
+
+    private static func crop(_ image: CGImage, rectangle: NormalizedCropRect) throws -> CGImage {
+        guard rectangle.isValid else { throw OrangeError.invalidInput("The crop area must stay inside the image.") }
+        // CGImage cropping uses top-left image coordinates. Round boundaries once,
+        // then clamp to a whole pixel so the UI and encoded result agree.
+        let x = min(image.width - 1, max(0, Int((rectangle.x * Double(image.width)).rounded())))
+        let y = min(image.height - 1, max(0, Int((rectangle.y * Double(image.height)).rounded())))
+        let right = min(image.width, max(x + 1, Int(((rectangle.x + rectangle.width) * Double(image.width)).rounded())))
+        let bottom = min(image.height, max(y + 1, Int(((rectangle.y + rectangle.height) * Double(image.height)).rounded())))
+        guard x != 0 || y != 0 || right != image.width || bottom != image.height else {
+            throw OrangeError.invalidInput("This crop would keep every pixel. Choose a smaller area. No copy was created.")
+        }
+        guard let result = image.cropping(to: CGRect(x: x, y: y, width: right - x, height: bottom - y)) else {
+            throw OrangeError.conversionFailed("Could not crop this image.")
+        }
+        return result
+    }
+
     private static func save(_ image: CGImage, source: CGImageSource, input: URL, format: OutputFormat,
-                             settings: ConversionSettings, suffix: String = "") throws -> URL {
+                             settings: ConversionSettings, suffix: String = "", requireSavings: Bool = false) throws -> URL {
         try OutputWriter.write(beside: input, extension: format.fileExtension, suffix: suffix) { stage in
-            if format == .webp && !nativeEncoderAvailable(.webp) {
-                try saveWebP(image, beside: input, to: stage, settings: settings)
-                return
-            }
-            if format == .pdf {
-                var bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
-                guard let document = CGContext(stage as CFURL, mediaBox: &bounds, nil) else {
-                    throw OrangeError.conversionFailed("Could not create the PDF document.")
+            try encode(image, source: source, to: stage, format: format, settings: settings)
+            if requireSavings {
+                let original = try input.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                let encoded = try stage.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+                guard encoded < original else {
+                    throw OrangeError.invalidInput("This quality setting does not reduce the file size. Choose a lower quality. No copy was created.")
                 }
-                document.beginPDFPage(nil)
-                document.draw(image, in: bounds)
-                document.endPDFPage()
-                document.closePDF()
-                return
-            }
-            guard let destination = CGImageDestinationCreateWithURL(stage as CFURL, identifier(for: format) as CFString, 1, nil) else {
-                throw OrangeError.unsupported("macOS could not create a \(format.label) image encoder.")
-            }
-            var properties: [CFString: Any] = settings.stripMetadata ? [:] : (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:])
-            properties[kCGImagePropertyOrientation] = 1
-            properties[kCGImagePropertyPixelWidth] = image.width
-            properties[kCGImagePropertyPixelHeight] = image.height
-            if var exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
-                exif[kCGImagePropertyExifPixelXDimension] = image.width
-                exif[kCGImagePropertyExifPixelYDimension] = image.height
-                properties[kCGImagePropertyExifDictionary] = exif
-            }
-            if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
-                tiff[kCGImagePropertyTIFFOrientation] = 1
-                properties[kCGImagePropertyTIFFDictionary] = tiff
-            }
-            properties[kCGImageDestinationLossyCompressionQuality] = settings.quality
-            // JPEG cannot represent transparency. Composite onto white instead of leaving black holes.
-            let hasAlpha: Bool
-            switch image.alphaInfo {
-            case .none, .noneSkipFirst, .noneSkipLast: hasAlpha = false
-            default: hasAlpha = true
-            }
-            let encoded = format == .jpeg && hasAlpha ? try render(image, width: image.width, height: image.height, opaque: true) : image
-            CGImageDestinationAddImage(destination, encoded, properties as CFDictionary)
-            guard CGImageDestinationFinalize(destination) else {
-                throw OrangeError.conversionFailed("macOS could not finish writing the \(format.label) image.")
             }
         }
     }
 
-    private static func saveWebP(_ image: CGImage, beside input: URL, to output: URL, settings: ConversionSettings) throws {
+    private static func encode(_ image: CGImage, source: CGImageSource, to stage: URL,
+                               format: OutputFormat, settings: ConversionSettings) throws {
+        if format == .webp && !nativeEncoderAvailable(.webp) {
+            try saveWebP(image, to: stage, settings: settings)
+            return
+        }
+        if format == .pdf {
+            var bounds = CGRect(x: 0, y: 0, width: image.width, height: image.height)
+            guard let document = CGContext(stage as CFURL, mediaBox: &bounds, nil) else {
+                throw OrangeError.conversionFailed("Could not create the PDF document.")
+            }
+            document.beginPDFPage(nil)
+            document.draw(image, in: bounds)
+            document.endPDFPage()
+            document.closePDF()
+            return
+        }
+        guard let destination = CGImageDestinationCreateWithURL(stage as CFURL, identifier(for: format) as CFString, 1, nil) else {
+            throw OrangeError.unsupported("macOS could not create a \(format.label) image encoder.")
+        }
+        var properties: [CFString: Any] = settings.stripMetadata ? [:] : (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] ?? [:])
+        properties[kCGImagePropertyOrientation] = 1
+        properties[kCGImagePropertyPixelWidth] = image.width
+        properties[kCGImagePropertyPixelHeight] = image.height
+        if var exif = properties[kCGImagePropertyExifDictionary] as? [CFString: Any] {
+            exif[kCGImagePropertyExifPixelXDimension] = image.width
+            exif[kCGImagePropertyExifPixelYDimension] = image.height
+            properties[kCGImagePropertyExifDictionary] = exif
+        }
+        if var tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any] {
+            tiff[kCGImagePropertyTIFFOrientation] = 1
+            properties[kCGImagePropertyTIFFDictionary] = tiff
+        }
+        properties[kCGImageDestinationLossyCompressionQuality] = settings.quality
+        // JPEG cannot represent transparency. Composite onto white instead of leaving black holes.
+        let hasAlpha: Bool
+        switch image.alphaInfo {
+        case .none, .noneSkipFirst, .noneSkipLast: hasAlpha = false
+        default: hasAlpha = true
+        }
+        let encoded = format == .jpeg && hasAlpha ? try render(image, width: image.width, height: image.height, opaque: true) : image
+        CGImageDestinationAddImage(destination, encoded, properties as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            throw OrangeError.conversionFailed("macOS could not finish writing the \(format.label) image.")
+        }
+        try Task.checkCancellation()
+    }
+
+    private static func saveWebP(_ image: CGImage, to output: URL, settings: ConversionSettings) throws {
         guard image.width <= 16_383, image.height <= 16_383 else {
             throw OrangeError.invalidInput("WebP supports at most 16,383 pixels per side. Resize this image before converting it.")
         }
@@ -343,7 +448,7 @@ public enum ImageConverter {
         }
         // Decode/orientation checks happen in ImageIO first. FFmpeg sees one trusted,
         // normalized PNG rather than an arbitrary image container or external links.
-        let intermediate = input.deletingLastPathComponent().appendingPathComponent(".orange-\(UUID().uuidString)-webp.png")
+        let intermediate = output.deletingLastPathComponent().appendingPathComponent(".orange-\(UUID().uuidString)-webp.png")
         defer { try? FileManager.default.removeItem(at: intermediate) }
         guard let destination = CGImageDestinationCreateWithURL(intermediate as CFURL, UTType.png.identifier as CFString, 1, nil) else {
             throw OrangeError.conversionFailed("Could not stage the image for WebP conversion.")

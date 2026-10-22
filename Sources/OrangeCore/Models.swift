@@ -35,7 +35,7 @@ public enum OutputFormat: String, CaseIterable, Codable, Sendable {
 }
 
 public enum ToolKind: String, CaseIterable, Sendable {
-    case compress, stripMetadata, resize, rotate, extractText, mergePDF, splitPDF, qrCode
+    case compress, stripMetadata, resize, crop, rotate, extractText, mergePDF, splitPDF, qrCode
     case trim, changeSpeed, extractAudio, snapshot, normalizeAudio
 
     public var label: String {
@@ -43,6 +43,7 @@ public enum ToolKind: String, CaseIterable, Sendable {
         case .compress: return "Compress"
         case .stripMetadata: return "Remove metadata"
         case .resize: return "Resize image"
+        case .crop: return "Crop image"
         case .rotate: return "Rotate 90°"
         case .extractText: return "Extract text"
         case .mergePDF: return "Merge PDFs"
@@ -60,6 +61,7 @@ public enum ToolKind: String, CaseIterable, Sendable {
         case .compress: return "arrow.down.right.and.arrow.up.left"
         case .stripMetadata: return "eye.slash"
         case .resize: return "arrow.up.left.and.arrow.down.right"
+        case .crop: return "crop"
         case .rotate: return "rotate.right"
         case .extractText: return "text.alignleft"
         case .mergePDF: return "doc.on.doc"
@@ -88,6 +90,7 @@ public struct ConversionSettings: Sendable {
     public var quality: Double = 0.82
     public var stripMetadata: Bool = false
     public var maxDimension: Int = 1920
+    public var cropRect: NormalizedCropRect? = nil
     public var pdfMaxDimension: Int = 10_000
     public var trimStart: Double = 0
     public var trimEnd: Double? = nil

@@ -146,6 +146,8 @@ actor WorkLimiter {
     private var actionCoordinatorOverride: FileActionCoordinator?
     private var resizePresenterOverride: (any ResizeOptionsPresenting)?
     private lazy var resizeOptions: any ResizeOptionsPresenting = resizePresenterOverride ?? ResizeOptionsCoordinator()
+    private var imagePresenterOverride: (any ImageOptionsPresenting)?
+    private lazy var imageOptions: any ImageOptionsPresenting = imagePresenterOverride ?? ImageOptionsCoordinator()
     private var persistsPreferences = true
     private lazy var fileActions: FileActionCoordinator = {
         let coordinator = actionCoordinatorOverride ?? FileActionCoordinator()
@@ -167,11 +169,14 @@ actor WorkLimiter {
     private var capabilityTask: Task<Void, Never>?
     private var isShuttingDown = false
 
-    init(persistPreferences: Bool = true, fileActionCoordinator: FileActionCoordinator? = nil,
-         resizePresenter: (any ResizeOptionsPresenting)? = nil) {
+    init(persistPreferences: Bool = true,
+         fileActionCoordinator: FileActionCoordinator? = nil,
+         resizePresenter: (any ResizeOptionsPresenting)? = nil,
+         imagePresenter: (any ImageOptionsPresenting)? = nil) {
         self.persistsPreferences = persistPreferences
         self.actionCoordinatorOverride = fileActionCoordinator
         self.resizePresenterOverride = resizePresenter
+        self.imagePresenterOverride = imagePresenter
         let defaults = ShortcutBindings()
         var restored = defaults
         var used = Set<DragShortcut>()
@@ -291,19 +296,41 @@ actor WorkLimiter {
         if case .action(let action) = choice { performAction(action, urls: urls); return }
         guard let operation = choice.operation else { return }
         if operation == .tool(.resize) {
-            resizeOptions.choose(urls, preferredMaximum: maxDimension) { [weak self] result in
+            let base = settings
+            resizeOptions.choose(urls, preferredMaximum: maxDimension, preferredSettings: base) { [weak self] result in
                 guard let self, !self.isShuttingDown else { return }
                 switch result {
                 case .success(let selection):
                     guard let selection, !selection.inputs.isEmpty else { return }
                     self.maxDimension = selection.maximumDimension
-                    self.enqueue(operation, urls: selection.inputs, settings: self.settings)
+                    var chosen = base
+                    chosen.maxDimension = selection.maximumDimension
+                    self.enqueue(operation, urls: selection.inputs, settings: chosen)
                 case .failure(let error):
                     self.error = error.localizedDescription
-                    self.onShowWindow?()
+                    self.showFeedback(error.localizedDescription)
                 }
             }
             return
+        }
+        if case .tool(let tool) = operation {
+            let families = Set(urls.map(FileFamily.detect))
+            if families == [.image], [.compress, .crop].contains(tool) {
+                let base = settings
+                imageOptions.choose(tool, urls: urls, preferredSettings: base) { [weak self] result in
+                    guard let self, !self.isShuttingDown else { return }
+                    switch result {
+                    case .success(let selection):
+                        guard let selection else { return }
+                        var chosen = base
+                        chosen.quality = selection.quality
+                        chosen.cropRect = selection.cropRect
+                        self.enqueue(operation, urls: selection.inputs, settings: chosen)
+                    case .failure(let error): self.showFeedback(error.localizedDescription)
+                    }
+                }
+                return
+            }
         }
         enqueue(operation, urls: urls, settings: settings)
     }
@@ -358,6 +385,7 @@ actor WorkLimiter {
     func shutdown() async {
         isShuttingDown = true
         resizeOptions.cancel()
+        imageOptions.cancel()
         fileActions.shutdown()
         capabilityTask?.cancel()
         let pending = Array(tasks.values)
