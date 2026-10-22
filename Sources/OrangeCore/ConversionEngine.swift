@@ -26,10 +26,8 @@ public enum ConversionEngine {
         guard let first = inputs.first else { return [] }
         let formats = formats(for: first)
         let remaining = inputs.dropFirst().map { Set(self.formats(for: $0)) }
-        let sameParent = inputs.allSatisfy { $0.deletingLastPathComponent().standardizedFileURL == first.deletingLastPathComponent().standardizedFileURL }
         return formats.filter { format in
             if format == .gzip && inputs.count > 1 { return false }
-            if [.zip, .tar].contains(format) && !sameParent { return false }
             return remaining.allSatisfy { $0.contains(format) }
         }
     }
@@ -60,7 +58,7 @@ public enum ConversionEngine {
         }
         if operation == .tool(.mergePDF) { return try DocumentConverter.mergePDFs(inputs) }
         if case .convert(let format) = operation, [.zip, .tar, .gzip].contains(format) {
-            guard inputs.allSatisfy({ ArchiveConverter.formats(for: $0).contains(format) }) else {
+            guard format != .gzip || inputs.allSatisfy({ ArchiveConverter.formats(for: $0).contains(format) }) else {
                 throw OrangeError.unsupported("Archive transcoding is unavailable. Choose files or folders to create a new archive.")
             }
             return try ArchiveConverter.create(inputs, to: format)

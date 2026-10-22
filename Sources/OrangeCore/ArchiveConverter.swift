@@ -28,13 +28,9 @@ public enum ArchiveConverter {
         }
         if format == .gzip { return try createGZIP(first, inputs: inputs) }
         let directory = first.deletingLastPathComponent().standardizedFileURL
-        guard inputs.allSatisfy({ $0.deletingLastPathComponent().standardizedFileURL == directory }) else {
-            throw OrangeError.unsupported("Files in one archive must share a parent folder. Place the selected items in the same folder first.")
-        }
         let names = inputs.map(\.lastPathComponent)
-        guard Set(names).count == names.count else { throw OrangeError.invalidInput("The same archive source was selected more than once.") }
+        guard Set(names).count == names.count else { throw OrangeError.invalidInput("Selected items have the same name. Rename them before placing them in one archive so nothing is replaced.") }
         // Prefixing every name prevents a filename beginning with '-' from becoming an option.
-        let relativeNames = names.map { "./" + $0 }
         let name = format == .zip ? "zip" : "tar"
         guard let executable = ProcessRunner.executable(named: name) else {
             throw OrangeError.backendMissing("The macOS \(name) archive utility is unavailable.")
@@ -43,12 +39,21 @@ public enum ArchiveConverter {
                                             suffix: inputs.count > 1 ? "-archive" : "") { stage in
             if format == .zip {
                 // -y stores symlinks as links, so directories cannot pull in linked external trees.
-                _ = try ProcessRunner.run(executable, arguments: ["-q", "-r", "-y", stage.path, "--"] + relativeNames,
-                                          currentDirectory: directory)
+                var parents: [URL] = []
+                for input in inputs {
+                    let parent = input.deletingLastPathComponent().standardizedFileURL
+                    if !parents.contains(parent) { parents.append(parent) }
+                }
+                for parent in parents {
+                    let entries = inputs.filter { $0.deletingLastPathComponent().standardizedFileURL == parent }.map { "./" + $0.lastPathComponent }
+                    _ = try ProcessRunner.run(executable, arguments: ["-q", "-r", "-y", stage.path, "--"] + entries,
+                                              currentDirectory: parent)
+                }
                 _ = try ProcessRunner.run(executable, arguments: ["-T", stage.path], currentDirectory: directory)
             } else {
                 // bsdtar stores symlinks without following them unless explicitly asked to do so.
-                _ = try ProcessRunner.run(executable, arguments: ["-cf", stage.path, "--"] + relativeNames,
+                let entries = inputs.flatMap { ["-C", $0.deletingLastPathComponent().path, "./" + $0.lastPathComponent] }
+                _ = try ProcessRunner.run(executable, arguments: ["-cf", stage.path] + entries,
                                           currentDirectory: directory)
                 _ = try ProcessRunner.run(executable, arguments: ["-tf", stage.path], currentDirectory: directory)
             }

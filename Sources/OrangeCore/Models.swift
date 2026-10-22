@@ -77,12 +77,12 @@ public enum ToolKind: String, CaseIterable, Sendable {
 }
 
 public enum FileAction: String, CaseIterable, Sendable {
-    case airDrop, float, copy, move, copyPath, terminal
+    case airDrop, float, copy, move, copyPath, terminal, details, createZip
     public var label: String {
-        switch self { case .airDrop: return "AirDrop"; case .float: return "Float"; case .copy: return "Copy"; case .move: return "Move"; case .copyPath: return "Copy path"; case .terminal: return "Terminal" }
+        switch self { case .airDrop: return "AirDrop"; case .float: return "Float"; case .copy: return "Copy"; case .move: return "Move"; case .copyPath: return "Copy path"; case .terminal: return "Terminal"; case .details: return "Details"; case .createZip: return "Create ZIP" }
     }
     public var symbol: String {
-        switch self { case .airDrop: return "airplayaudio"; case .float: return "rectangle.on.rectangle"; case .copy: return "doc.on.doc"; case .move: return "folder"; case .copyPath: return "link"; case .terminal: return "terminal" }
+        switch self { case .airDrop: return "airplayaudio"; case .float: return "rectangle.on.rectangle"; case .copy: return "doc.on.doc"; case .move: return "folder"; case .copyPath: return "link"; case .terminal: return "terminal"; case .details: return "info.circle"; case .createZip: return "archivebox" }
     }
 }
 

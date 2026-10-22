@@ -152,11 +152,16 @@ actor WorkLimiter {
     private lazy var imageOptions: any ImageOptionsPresenting = imagePresenterOverride ?? ImageOptionsCoordinator()
     private lazy var mediaOptions: any MediaOptionsPresenting = mediaPresenterOverride ?? MediaOptionsCoordinator()
     private lazy var pdfOptions: any PDFOptionsPresenting = pdfPresenterOverride ?? PDFOptionsCoordinator()
+    private lazy var fileDetails: FileDetailsCoordinator = {
+        let coordinator = FileDetailsCoordinator()
+        coordinator.onError = { [weak self] in self?.showFeedback($0) }
+        return coordinator
+    }()
     private var persistsPreferences = true
     private lazy var fileActions: FileActionCoordinator = {
         let coordinator = actionCoordinatorOverride ?? FileActionCoordinator()
         coordinator.onFeedback = { [weak self] message in self?.showFeedback(message) }
-        coordinator.onError = { [weak self] message in self?.error = message; self?.onShowWindow?() }
+        coordinator.onError = { [weak self] message in self?.error = message; self?.showFeedback(message) }
         return coordinator
     }()
 
@@ -420,6 +425,7 @@ actor WorkLimiter {
         imageOptions.cancel()
         mediaOptions.cancel()
         pdfOptions.cancel()
+        fileDetails.close()
         fileActions.shutdown()
         capabilityTask?.cancel()
         let pending = Array(tasks.values)
@@ -435,6 +441,10 @@ actor WorkLimiter {
 
     private func performAction(_ action: FileAction, urls: [URL]) {
         switch action {
+        case .details: fileDetails.show(urls)
+        case .createZip:
+            guard urls.count > 1 else { return }
+            enqueue(.convert(.zip), urls: urls, settings: settings)
         case .copy:
             fileActions.copyFiles(urls)
         case .copyPath:
@@ -448,13 +458,12 @@ actor WorkLimiter {
             panel.canChooseDirectories = true
             panel.canCreateDirectories = true
             panel.prompt = "Move here"
-            onShowWindow?()
             guard panel.runModal() == .OK, let destination = panel.url, !isShuttingDown else { return }
             // A multi-file move is intentionally preflighted to reject all name collisions.
             let targets = urls.map { destination.appendingPathComponent($0.lastPathComponent) }
             guard Set(targets).count == targets.count, targets.allSatisfy({ !FileManager.default.fileExists(atPath: $0.path) }) else {
                 error = "Move stopped: a file with the same name already exists in that folder."
-                onShowWindow?()
+                showFeedback(error ?? "Move stopped")
                 return
             }
             let id = UUID()
@@ -466,7 +475,7 @@ actor WorkLimiter {
                         for (source, target) in zip(urls, targets) { try FileManager.default.moveItem(at: source, to: target) }
                     }.value
                     NSWorkspace.shared.activateFileViewerSelecting(targets)
-                } catch { self.error = "Move stopped: \(error.localizedDescription). Some files may already have moved."; self.onShowWindow?() }
+                } catch { self.error = "Move stopped: \(error.localizedDescription). Some files may already have moved."; self.showFeedback(self.error ?? "Move stopped") }
             }
         case .terminal:
             fileActions.openTerminal(urls)
