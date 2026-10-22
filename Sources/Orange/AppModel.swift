@@ -157,6 +157,7 @@ actor WorkLimiter {
     func showFeedback(_ message: String) { actionFeedback = message; onShowActionFeedback?() }
 
     var onShowWindow: (() -> Void)?
+    var onBeginFinderInteraction: (() -> Void)?
     var onShowProgress: (() -> Void)?
     var onPreviewWheel: (() -> Void)?
     var onFloat: (([URL]) -> Void)?

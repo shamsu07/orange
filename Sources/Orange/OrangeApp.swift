@@ -62,6 +62,10 @@ struct OrangeApplication {
         statusItem = item
         installMainMenu()
         model.onShowWindow = { [weak self] in self?.openWindow() }
+        model.onBeginFinderInteraction = { [weak self] in
+            self?.window?.orderOut(nil)
+            self?.preferencesWindow?.orderOut(nil)
+        }
         model.onShowProgress = { [weak self] in self?.showProgress() }
         model.onShowActionFeedback = { [weak self] in self?.showActionFeedback() }
         model.onPreviewWheel = { [weak self] in self?.wheel?.preview() }

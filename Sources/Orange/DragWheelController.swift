@@ -268,6 +268,7 @@ struct DragWheelInput {
             return false
         }
         if wasEmpty {
+            model.onBeginFinderInteraction?()
             loadCapabilities(urls, generation: token)
             show(mode: currentMode, at: lastPoint)
         }
@@ -309,8 +310,8 @@ struct DragWheelInput {
         stopRecoveryMonitor()
         dragCapture.releaseMouseGesture()
         wheelView?.releaseDrag()
-        NSApp.activate(ignoringOtherApps: true)
-        panel?.makeKeyAndOrderFront(nil)
+        panel?.orderFrontRegardless()
+        panel?.makeKey()
         panel?.makeFirstResponder(wheelView)
         record("finish.picker_ready")
     }
@@ -411,10 +412,16 @@ struct DragWheelInput {
         // over unrelated window/text drags. File data makes the artwork visible.
         wheelView?.layer?.opacity = awaitingFiles ? 0 : 1
         wheelView?.refreshAccessibility()
-        if preview || !dragActive {
+        if preview {
             panel?.makeKeyAndOrderFront(nil)
             panel?.makeFirstResponder(wheelView)
-        } else { panel?.orderFrontRegardless() }
+        } else {
+            panel?.orderFrontRegardless()
+            if !dragActive {
+                panel?.makeKey()
+                panel?.makeFirstResponder(wheelView)
+            }
+        }
         record("presentation.completed", fields: ["awaitingFiles": awaitingFiles, "choices": choices.count,
                                                    "receiverWindowAtPoint": NSWindow.windowNumber(at: location, belowWindowWithWindowNumber: 0)])
     }
