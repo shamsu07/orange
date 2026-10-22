@@ -1,0 +1,9 @@
+.build/
+.cache/
+.DS_Store
+build/
+*.xcuserstate
+xcuserdata/
+.vscode/
+
+dist/

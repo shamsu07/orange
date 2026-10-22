@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible failure in an implemented Orange workflow.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What happened, and what should have happened?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Include the input type, selected format/tool/action and conversion settings. Link a small generated or non-private fixture if available.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Orange version, macOS version and Mac architecture
+      placeholder: Orange 0.1.0 local build; macOS version; arm64 or x86_64
+    validations:
+      required: true
+  - type: textarea
+    id: backend
+    attributes:
+      label: Backend and diagnostics
+      description: For media, include the selected FFmpeg path/version and relevant errors. For memory reports, distinguish RSS from physical footprint. Remove private paths and file contents.
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Additional evidence
+      description: Output inspection, screenshots or test results that help reproduce the failure.

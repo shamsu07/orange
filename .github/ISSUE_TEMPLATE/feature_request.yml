@@ -1,0 +1,22 @@
+name: Feature request
+description: Propose a concrete local conversion or file-workflow improvement.
+body:
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Workflow and problem
+      description: What are you trying to do, and where does the current implementation stop?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Proposed behavior
+      description: Describe the input, output and user-visible result. Include important fidelity or performance constraints.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence or implementation context
+      description: Link relevant specifications, an existing parity requirement, open-source backend or reproducible example. Separate observed reference behavior from assumptions.

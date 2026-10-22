@@ -1,0 +1,130 @@
+{
+  "benchmark" : "Orange synthetic image conversion smoke measurement",
+  "caveats" : [
+    "Synthetic input is not representative photographic content.",
+    "This is a measurement smoke run, not a comparison with Tangerine or a performance guarantee.",
+    "Fifteen measured samples make nearest-rank p95 equal to the slowest sample.",
+    "Results depend on build optimization, machine load, OS encoders and filesystem cache state."
+  ],
+  "environment" : {
+    "active_logical_cpu_count" : 15,
+    "debug_compilation_condition_defined" : false,
+    "logical_cpu_count" : 15,
+    "operating_system" : "Version 27.0.1 (Build 26A434)"
+  },
+  "fixture" : {
+    "description" : "Deterministic RGB gradient with a grid of colored ellipses",
+    "height_px" : 2160,
+    "source_bytes" : 7056905,
+    "source_format" : "PNG",
+    "width_px" : 3840
+  },
+  "measured_at_utc" : "2026-10-20T20:35:23Z",
+  "measurements" : [
+    {
+      "measured_iterations" : 15,
+      "median_ms" : 66.147834000000003,
+      "operation" : "PNG_to_JPEG_quality_0.82",
+      "output_bytes_each_iteration" : [
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080,
+        542080
+      ],
+      "p95_ms" : 76.774249999999995,
+      "percentile_method" : "nearest_rank",
+      "samples_ms" : [
+        63.763916000000002,
+        63.734999999999999,
+        63.926749999999998,
+        63.378416999999999,
+        64.499959000000004,
+        66.147834000000003,
+        69.051457999999997,
+        72.854500000000002,
+        72.055875,
+        73.807249999999996,
+        76.774249999999995,
+        72.793499999999995,
+        75.863167000000004,
+        65.872958999999994,
+        65.556916999999999
+      ],
+      "timing_scope" : "conversion call including decode, encode and atomic output publication; excludes fixture generation, file-size lookup and output deletion",
+      "warmup_iterations" : 3
+    },
+    {
+      "measured_iterations" : 15,
+      "median_ms" : 84.753625,
+      "operation" : "PNG_resize_long_edge_1920",
+      "output_bytes_each_iteration" : [
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784,
+        1619784
+      ],
+      "p95_ms" : 86.893208999999999,
+      "percentile_method" : "nearest_rank",
+      "samples_ms" : [
+        83.945583999999997,
+        86.583292,
+        84.753625,
+        84.051582999999994,
+        85.879833000000005,
+        83.950249999999997,
+        84.609667000000002,
+        84.156082999999995,
+        85.151667000000003,
+        86.893208999999999,
+        85.307208000000003,
+        84.799916999999994,
+        84.241416999999998,
+        84.789625000000001,
+        83.899540999999999
+      ],
+      "timing_scope" : "conversion call including decode, encode and atomic output publication; excludes fixture generation, file-size lookup and output deletion",
+      "warmup_iterations" : 3
+    }
+  ],
+  "peak_rss_scope" : "Entire benchmark process, including fixture generation, warmups, conversions and capability queries; Darwin ru_maxrss is bytes",
+  "process_peak_rss_bytes" : 1152040960,
+  "schema_version" : 1,
+  "warm_capability_query" : {
+    "formats" : [
+      "jpeg",
+      "png",
+      "heic",
+      "tiff",
+      "bmp",
+      "gif",
+      "avif",
+      "pdf"
+    ],
+    "iterations" : 100,
+    "mean_ms" : 0.073632080000000003,
+    "scope" : "ImageConverter.formats after one warmup; source\/metadata opening included, no full pixel decode requested",
+    "total_ms" : 7.3632080000000002
+  }
+}
