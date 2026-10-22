@@ -5,6 +5,7 @@ import OrangeCore
 @MainActor final class FileDetailsCoordinator: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
     private var task: Task<Void, Never>?
+    private let pendingWork = PreviewTaskGroup()
     private var generation = UUID()
     var onError: ((String) -> Void)?
 
@@ -12,8 +13,10 @@ import OrangeCore
         close()
         let token = UUID()
         generation = token
-        task = Task { [weak self] in
-            let worker = Task.detached(priority: .userInitiated) { try urls.map { try FileDetails.load($0) } }
+        task = pendingWork.spawn { [weak self] in
+            let worker = Task.detached(priority: .userInitiated) {
+                try await WorkLimiter.shared.withPermit { try urls.map { try FileDetails.load($0) } }
+            }
             do {
                 let details = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
                 guard let self, !Task.isCancelled, self.generation == token else { return }
@@ -40,12 +43,14 @@ import OrangeCore
     func close() {
         generation = UUID()
         task?.cancel(); task = nil
+        pendingWork.cancelAll()
         let closing = panel
         panel = nil
         closing?.delegate = nil
         closing?.close()
     }
     func windowWillClose(_ notification: Notification) { close() }
+    func shutdown() async { close(); await pendingWork.shutdown() }
 }
 
 private struct FileDetailsView: View {

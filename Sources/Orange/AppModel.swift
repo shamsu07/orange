@@ -2,44 +2,6 @@ import AppKit
 import SwiftUI
 import OrangeCore
 
-enum WheelAppearance: String, CaseIterable { case glass = "Glass", solid = "Solid" }
-
-enum DragShortcut: String, CaseIterable, Identifiable {
-    case shift, command, control, option, optionShift, commandShift, controlShift, optionCommand
-    var id: String { rawValue }
-    var flags: NSEvent.ModifierFlags {
-        switch self {
-        case .shift: return .shift
-        case .command: return .command
-        case .control: return .control
-        case .option: return .option
-        case .optionShift: return [.option, .shift]
-        case .commandShift: return [.command, .shift]
-        case .controlShift: return [.control, .shift]
-        case .optionCommand: return [.option, .command]
-        }
-    }
-    var symbol: String {
-        switch self {
-        case .shift: return "⇧"; case .command: return "⌘"; case .control: return "⌃"; case .option: return "⌥"
-        case .optionShift: return "⌥⇧"; case .commandShift: return "⌘⇧"; case .controlShift: return "⌃⇧"; case .optionCommand: return "⌥⌘"
-        }
-    }
-    var label: String {
-        switch self {
-        case .shift: return "⇧  Shift"; case .command: return "⌘  Command"; case .control: return "⌃  Control"; case .option: return "⌥  Option"
-        case .optionShift: return "⌥⇧  Option + Shift"; case .commandShift: return "⌘⇧  Command + Shift"
-        case .controlShift: return "⌃⇧  Control + Shift"; case .optionCommand: return "⌥⌘  Option + Command"
-        }
-    }
-}
-
-enum WheelMode: String, CaseIterable {
-    case convert = "Convert", tools = "Tools", actions = "Actions"
-    var symbol: String { switch self { case .convert: return "arrow.triangle.2.circlepath"; case .tools: return "slider.horizontal.3"; case .actions: return "cursorarrow.and.square.on.square.dashed" } }
-    var shortcut: String { switch self { case .convert: return "⇧"; case .tools: return "⌘"; case .actions: return "⌃" } }
-}
-
 private struct ShortcutBindings {
     var conversion: DragShortcut = .shift
     var tools: DragShortcut = .command
@@ -48,52 +10,6 @@ private struct ShortcutBindings {
     subscript(mode: WheelMode) -> DragShortcut {
         get { switch mode { case .convert: return conversion; case .tools: return tools; case .actions: return actions } }
         set { switch mode { case .convert: conversion = newValue; case .tools: tools = newValue; case .actions: actions = newValue } }
-    }
-}
-
-enum WheelChoice: Hashable, Identifiable {
-    case format(OutputFormat), tool(ToolKind), action(FileAction)
-    var id: String { label }
-    var label: String {
-        switch self { case .format(let format): return format == .jpeg ? "JPG" : format.label; case .tool(let tool): return tool.label; case .action(let action): return action.label }
-    }
-    var symbol: String {
-        switch self { case .format: return "doc"; case .tool(let tool): return tool.symbol; case .action(let action): return action.symbol }
-    }
-    var operation: ConversionOperation? {
-        switch self { case .format(let format): return .convert(format); case .tool(let tool): return .tool(tool); case .action: return nil }
-    }
-}
-
-struct ConversionJob: Identifiable {
-    enum State { case queued, running, complete, failed, cancelled }
-    let id: UUID
-    let inputs: [URL]
-    let operation: ConversionOperation
-    var state: State = .queued
-    var outputs: [URL] = []
-    var message: String?
-    var started: Date?
-    var elapsed: TimeInterval?
-}
-
-/// Global bound across batches, so simultaneous drops cannot spawn unlimited encoders.
-actor WorkLimiter {
-    private var active = 0
-    private let limit = 2
-    private var waiters: [(UUID, CheckedContinuation<Bool, Never>)] = []
-    func acquire(_ id: UUID) async -> Bool {
-        if Task.isCancelled { return false }
-        if active < limit { active += 1; return true }
-        return await withTaskCancellationHandler(operation: {
-            await withCheckedContinuation { continuation in waiters.append((id, continuation)) }
-        }, onCancel: { Task { await self.cancel(id) } })
-    }
-    func release() {
-        if waiters.isEmpty { active -= 1 } else { waiters.removeFirst().1.resume(returning: true) }
-    }
-    private func cancel(_ id: UUID) {
-        if let index = waiters.firstIndex(where: { $0.0 == id }) { waiters.remove(at: index).1.resume(returning: false) }
     }
 }
 
@@ -116,7 +32,9 @@ actor WorkLimiter {
     var toolsShortcut: DragShortcut { get { dragShortcuts.tools } set { setShortcut(newValue, for: .tools) } }
     var actionsShortcut: DragShortcut { get { dragShortcuts.actions } set { setShortcut(newValue, for: .actions) } }
     @Published var wheelAppearance = WheelAppearance(rawValue: UserDefaults.standard.string(forKey: "wheelAppearance") ?? "Glass") ?? .glass {
-        didSet { if persistsPreferences { UserDefaults.standard.set(wheelAppearance.rawValue, forKey: "wheelAppearance") } }
+        didSet {
+            if persistsPreferences { UserDefaults.standard.set(wheelAppearance.rawValue, forKey: "wheelAppearance") }
+        }
     }
     @Published var soundFeedback = UserDefaults.standard.object(forKey: "soundFeedback") as? Bool ?? true {
         didSet { if persistsPreferences { UserDefaults.standard.set(soundFeedback, forKey: "soundFeedback") } }
@@ -182,7 +100,7 @@ actor WorkLimiter {
     var onShowProgress: (() -> Void)?
     var onPreviewWheel: (() -> Void)?
     var onFloat: (([URL]) -> Void)?
-    private let limiter = WorkLimiter()
+    private let limiter = WorkLimiter.shared
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var moveTasks: [UUID: Task<Void, Never>] = [:]
     private var capabilityTask: Task<Void, Never>?
@@ -449,6 +367,11 @@ actor WorkLimiter {
         let pending = Array(tasks.values)
         let pendingMoves = Array(moveTasks.values)
         for task in pending { task.cancel() }
+        await resizeOptions.shutdown()
+        await imageOptions.shutdown()
+        await mediaOptions.shutdown()
+        await pdfOptions.shutdown()
+        await fileDetails.shutdown()
         for task in pending { await task.value }
         // A filesystem move can be copying across volumes. Let it finish rather
         // than terminating the process partway through that file operation.

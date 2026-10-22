@@ -167,6 +167,58 @@ final class MediaOptionsTests: XCTestCase {
         XCTAssertFalse(preview.playbackAvailable)
     }
 
+    @MainActor func testShutdownJoinsRetiredFramesAndKeepsPreviewWorkersWithinTheSharedLimit() async throws {
+        let workers = PreviewTaskGroup()
+        let gate = PreviewLifecycleTestGate()
+        let previews = (0..<3).map { index in
+            let preview = MediaPreviewModel(tasks: workers) { _, _ in
+                await gate.hold()
+                return Data()
+            }
+            preview.load(source("retired-\(index).mp4"), time: 1)
+            return preview
+        }
+        let deadline = Date().addingTimeInterval(3)
+        while await gate.started < 2 && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        let started = await gate.started
+        XCTAssertEqual(started, 2)
+        guard started == 2 else { previews.forEach { $0.stop() }; await gate.releaseAll(); await workers.shutdown(); return }
+        try await Task.sleep(for: .milliseconds(30))
+        let beforeCancel = await gate.started
+        XCTAssertEqual(beforeCancel, 2, "The third preview must wait for the same two permits used by conversions.")
+
+        previews.forEach { $0.stop() }
+        let coordinator = MediaOptionsCoordinator(tasks: workers)
+        var shutdownFinished = false
+        let shutdown = Task { await coordinator.shutdown(); shutdownFinished = true }
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(shutdownFinished, "Cancelled frame decoders still own resources until their workers return.")
+        await gate.releaseAll()
+        await shutdown.value
+        let maximumActive = await gate.maximumActive
+        let totalStarted = await gate.started
+        let cancelledOnReturn = await gate.cancelledOnReturn
+        XCTAssertEqual(maximumActive, 2)
+        XCTAssertEqual(totalStarted, 2, "Cancellation must remove the queued third preview without decoding it.")
+        XCTAssertEqual(cancelledOnReturn, 2)
+        XCTAssertTrue(workers.isShutdown)
+        for preview in previews {
+            XCTAssertNil(preview.frame)
+            XCTAssertFalse(preview.loadingFrame)
+            XCTAssertFalse(preview.isPlaying)
+            XCTAssertNil(preview.player.currentItem)
+            preview.load(source(), time: 0)
+            XCTAssertNil(preview.player.currentItem)
+            XCTAssertFalse(preview.loadingFrame, "Late view callbacks cannot restart a stopped preview group.")
+        }
+        var callbacks = 0
+        coordinator.choose([source().url], tool: .snapshot, settings: ConversionSettings()) { result in
+            callbacks += 1
+            guard case .success(nil) = result else { return XCTFail("A stopped coordinator must reject new work.") }
+        }
+        XCTAssertEqual(callbacks, 1)
+    }
+
     @MainActor func testTimeFormatterRejectsNonFiniteAndUnrepresentableDurations() {
         for value in [Double.nan, Double.infinity, -1, Double.greatestFiniteMagnitude] {
             XCTAssertEqual(MediaOptionsModel.time(value), "—")

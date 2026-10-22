@@ -9,29 +9,35 @@ import OrangeCore
     @Published private(set) var isEstimating = false
     @Published private(set) var errorMessage: String?
     private var task: Task<Void, Never>?
+    private let workers: PreviewTaskGroup
+    private var stopped = false
     private var generation = UUID()
     private let encoder: Encoder
     private let queue = ImagePreviewEncoderQueue()
     private let debounce: Duration
 
-    init(debounce: Duration = .milliseconds(250), encoder: @escaping Encoder = {
+    init(taskGroup: PreviewTaskGroup? = nil, debounce: Duration = .milliseconds(250), encoder: @escaping Encoder = {
         try ImageConverter.preview($0, input: $1, settings: $2)
     }) {
+        self.workers = taskGroup ?? PreviewTaskGroup()
         self.debounce = debounce
         self.encoder = encoder
     }
 
     func schedule(_ tool: ToolKind, urls: [URL], settings: ConversionSettings) {
+        guard !stopped else { return }
         cancel()
         guard !urls.isEmpty else { return }
         let request = generation
         isEstimating = true
         let encoder = encoder, delay = debounce, queue = queue
-        task = Task { [weak self] in
+        task = workers.spawn { [weak self] in
             do {
                 try await Task.sleep(for: delay)
                 let worker = Task.detached(priority: .userInitiated) {
-                    try await queue.encode(tool, urls: urls, settings: settings, encoder: encoder)
+                    try await WorkLimiter.shared.withPermit {
+                        try await queue.encode(tool, urls: urls, settings: settings, encoder: encoder)
+                    }
                 }
                 let result = try await withTaskCancellationHandler(operation: { try await worker.value }, onCancel: { worker.cancel() })
                 guard let self, !Task.isCancelled, self.generation == request else { return }
@@ -54,6 +60,12 @@ import OrangeCore
         estimates = [:]
         errorMessage = nil
         isEstimating = false
+    }
+
+    func shutdown() async {
+        stopped = true
+        cancel()
+        await workers.shutdown()
     }
 
     static func bytes(_ value: Int64) -> String { ByteCountFormatter.string(fromByteCount: value, countStyle: .file) }

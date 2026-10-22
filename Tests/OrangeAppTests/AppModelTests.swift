@@ -71,6 +71,7 @@ final class AppModelTests: XCTestCase {
     private(set) var requestedURLs: [URL] = []
     private(set) var preferredMaximum: Int?
     private(set) var cancelCount = 0
+    var shutdownCount = 0
     private var completion: (@MainActor (Result<ResizeSelection?, Error>) -> Void)?
 
     func choose(_ urls: [URL], preferredMaximum: Int, preferredSettings: ConversionSettings,
@@ -85,4 +86,5 @@ final class AppModelTests: XCTestCase {
         callback?(result)
     }
     func cancel() { cancelCount += 1 }
+    func shutdown() async { shutdownCount += 1 }
 }

@@ -74,6 +74,45 @@ final class ImageOptionsTests: XCTestCase {
         XCTAssertEqual(model.previewSettings?.maxDimension, 64)
     }
 
+    @MainActor func testShutdownJoinsRetiredEncoderBeforeCleanupAndRejectsNewWork() async throws {
+        let source = try fixture()
+        let marker = folder.appendingPathComponent("in-progress-preview")
+        let blocking = BlockingEstimateEncoder(marker: marker, dimensions: source.dimensions)
+        let group = PreviewTaskGroup()
+        var retired: ImageEncodingPreviewModel? = ImageEncodingPreviewModel(taskGroup: group, debounce: .zero) { _, _, _ in
+            try blocking.encode()
+        }
+        retired?.schedule(.resize, urls: [source.url], settings: ConversionSettings())
+        let deadline = Date().addingTimeInterval(2)
+        while !blocking.hasStarted && Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertTrue(blocking.hasStarted)
+        guard blocking.hasStarted else { blocking.finish(); await retired?.shutdown(); return }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: marker.path))
+        retired?.cancel()
+        retired = nil
+        let newerCalls = EstimateRecorder()
+        let current = ImageEncodingPreviewModel(taskGroup: group, debounce: .milliseconds(100)) { _, _, _ in
+            newerCalls.record(1)
+            return ImageConverter.EncodingPreview(originalBytes: 1000, encodedBytes: 500, dimensions: source.dimensions)
+        }
+        current.schedule(.resize, urls: [source.url], settings: ConversionSettings())
+        var didFinish = false
+        let shutdown = Task { await current.shutdown(); didFinish = true }
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(didFinish, "Shutdown must join the cancelled encoder before returning.")
+        XCTAssertFalse(blocking.hasCleanedUp)
+        blocking.finish()
+        await shutdown.value
+        XCTAssertTrue(didFinish)
+        XCTAssertTrue(blocking.hasCleanedUp)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
+        XCTAssertEqual(newerCalls.values, [])
+        current.schedule(.resize, urls: [source.url], settings: ConversionSettings())
+        try await Task.sleep(for: .milliseconds(130))
+        XCTAssertEqual(newerCalls.values, [], "Shutdown models must not start another encoder.")
+        XCTAssertTrue(current.estimates.isEmpty)
+    }
+
     private func fixture() throws -> ResizeSource {
         let input = folder.appendingPathComponent("image.png")
         let canvas = try XCTUnwrap(CGContext(data: nil, width: 200, height: 100, bitsPerComponent: 8, bytesPerRow: 800,
@@ -91,4 +130,33 @@ private final class EstimateRecorder: @unchecked Sendable {
     private var recorded: [Int] = []
     var values: [Int] { lock.lock(); defer { lock.unlock() }; return recorded }
     func record(_ value: Int) { lock.lock(); recorded.append(value); lock.unlock() }
+}
+
+private final class BlockingEstimateEncoder: @unchecked Sendable {
+    private let condition = NSCondition()
+    private var allowedToFinish = false
+    private var began = false
+    private var cleaned = false
+    private let marker: URL
+    let dimensions: ImageConverter.Dimensions
+
+    init(marker: URL, dimensions: ImageConverter.Dimensions) { self.marker = marker; self.dimensions = dimensions }
+    var hasStarted: Bool { condition.lock(); defer { condition.unlock() }; return began }
+    var hasCleanedUp: Bool { condition.lock(); defer { condition.unlock() }; return cleaned }
+    func finish() { condition.lock(); allowedToFinish = true; condition.broadcast(); condition.unlock() }
+    func encode() throws -> ImageConverter.EncodingPreview {
+        try Data("temporary encoded bytes".utf8).write(to: marker)
+        defer {
+            try? FileManager.default.removeItem(at: marker)
+            condition.lock(); cleaned = true; condition.unlock()
+        }
+        condition.lock()
+        began = true
+        condition.broadcast()
+        // Deliberately ignores task cancellation until its synchronous encode
+        // returns, matching the cancellation boundary of ImageIO.
+        while !allowedToFinish { condition.wait() }
+        condition.unlock()
+        return ImageConverter.EncodingPreview(originalBytes: 1000, encodedBytes: 500, dimensions: dimensions)
+    }
 }

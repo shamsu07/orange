@@ -108,6 +108,7 @@ final class ResizeOptionsTests: XCTestCase {
         model.perform(.tool(.resize), urls: [url])
         await model.shutdown()
         XCTAssertEqual(presenter.cancelCount, 1)
+        XCTAssertEqual(presenter.shutdownCount, 1)
         // A delayed presentation callback is harmless after shutdown.
         presenter.complete(.success(ResizeSelection(inputs: [url], maximumDimension: 128)))
         XCTAssertTrue(model.jobs.isEmpty)
