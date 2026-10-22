@@ -381,6 +381,7 @@ public enum DocumentConverter {
             attributed = NSAttributedString(string: try readText(input))
         } else {
             try validateTextInputSize(input)
+            if ext == "docx" { try OpenXMLPackageGuard.validate(input) }
             let type: NSAttributedString.DocumentType
             switch ext {
             case "rtf": type = .rtf

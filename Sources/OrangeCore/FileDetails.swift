@@ -64,7 +64,9 @@ public struct FileDetails: Sendable {
                                Field(label: "Locked", value: document.isLocked ? "Yes" : "No")]
                     if let page = document.page(at: 0) {
                         let bounds = page.bounds(for: .mediaBox)
-                        pdf.append(Field(label: "First page", value: "\(Int(bounds.width)) × \(Int(bounds.height)) pt"))
+                        let size = bounds.width.isFinite && bounds.height.isFinite && bounds.width > 0 && bounds.height > 0
+                            ? String(format: "%.0f × %.0f pt", bounds.width, bounds.height) : "Invalid page dimensions"
+                        pdf.append(Field(label: "First page", value: size))
                     }
                     if let attributes = document.documentAttributes { pdf += flatten(Dictionary(uniqueKeysWithValues: attributes.map { (String(describing: $0.key), $0.value) })) }
                     sections.append(Section(title: "PDF", fields: pdf))
