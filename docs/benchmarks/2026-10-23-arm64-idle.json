@@ -1,0 +1,27 @@
+{
+  "date_utc": "2026-10-22T20:27:48.819390+00:00",
+  "source_commit": "cc53a09e58e27a842200ae51feabebc0289010f7",
+  "executable_sha256": "bee96e1ca8c1ca1da12ed748061a0e88157e5c7807cba95e29971bc41975cc4e",
+  "architecture": "arm64",
+  "hardware": "Mac17,9",
+  "os": "ProductName:\t\tmacOS\nProductVersion:\t\t27.0.1\nBuildVersion:\t\t26A434",
+  "conditions": "Release app, all Orange windows/wheels closed; Finder wheels enabled, sounds/haptics enabled; no queued jobs. After native PDF/media workflow use. One 30-second sample.",
+  "pid": 15965,
+  "wall_seconds": 30.011616624999988,
+  "before": {
+    "cpu_time": "0:01.71",
+    "cpu_seconds": 1.71,
+    "rss_bytes": 158662656,
+    "ps_cpu_percent": 0.0
+  },
+  "after": {
+    "cpu_time": "0:01.71",
+    "cpu_seconds": 1.71,
+    "rss_bytes": 158662656,
+    "ps_cpu_percent": 0.0
+  },
+  "cpu_seconds_delta": 0.0,
+  "average_one_core_percent": 0.0,
+  "children_after": [],
+  "limitations": "ps CPU time is quantized to 0.01 second. RSS is not physical footprint. This does not measure energy, wakeups, battery drain, long-run memory or comparative performance."
+}

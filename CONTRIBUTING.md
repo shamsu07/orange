@@ -52,6 +52,8 @@ For performance changes, record hardware/OS, build mode, fixtures, output settin
 
 ## Pull requests
 
+Keep one focused fix or feature per commit, with a short imperative message and its meaningful regression coverage. Inspect the staged tree so helper files are included and each commit remains buildable. Orange's first commit is a truthful snapshot of the existing prototype; earlier development was not reconstructed as invented history. Follow-up defects found during native checks receive their own fix commits. Generated caches, fixtures, app bundles and release archives remain ignored.
+
 Keep a pull request focused. Explain the concrete problem, resulting behavior, relevant limits and validation. Use short imperative commit messages. Link the issue or parity requirement when one exists; include before/after native evidence for visual changes without claiming unmeasured exactness.
 
 Orange source and original artwork use [MIT](LICENSE). Bundled FFmpeg retains its upstream LGPL terms and matching source/license materials. New dependencies need a documented source, version, license and redistribution approach. Do not submit proprietary reference-application code, copied product artwork, credentials or private test files.
