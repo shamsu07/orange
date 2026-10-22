@@ -65,6 +65,105 @@ final class MediaInspectionTests: XCTestCase {
         XCTAssertTrue(message.contains(outputBytes < sourceBytes ? "smaller" : "larger"))
     }
 
+    func testSpeedAtOneFPSChangesRealDurationAndPreservesEveryFrameAtAllPresetRates() throws {
+        let input = try speedClip()
+        guard MediaConverter.tools(for: input).contains(.changeSpeed) else { throw XCTSkip("FFmpeg lacks an MP4 encoder.") }
+        let original = try Data(contentsOf: input)
+        for speed in [0.25, 0.5, 0.75, 1.25, 1.5, 2, 3, 4] {
+            var settings = ConversionSettings()
+            settings.speed = speed
+            let output = try XCTUnwrap(MediaConverter.apply(.changeSpeed, to: input, settings: settings).outputs.first)
+            let duration = try XCTUnwrap(MediaConverter.inspect(output).duration)
+            XCTAssertEqual(duration, 4 / speed, accuracy: 0.003, "\(speed)× must change playback duration, not just metadata in the UI.")
+            let timestamps = try videoTimestamps(output)
+            XCTAssertEqual(timestamps.count, 4, "The four distinct source frames must all survive at \(speed)×.")
+            for (index, time) in timestamps.sorted().enumerated() {
+                XCTAssertEqual(time, Double(index) / speed, accuracy: 0.003, "Incorrect frame time at \(speed)×.")
+            }
+            if speed == 2 {
+                let finalFrame = try previewPixel(MediaConverter.previewFrame(output, at: 1.5))
+                XCTAssertGreaterThan(finalFrame[0], 200)
+                XCTAssertGreaterThan(finalFrame[1], 200)
+                XCTAssertLessThan(finalFrame[2], 20)
+            }
+        }
+        XCTAssertEqual(try Data(contentsOf: input), original)
+    }
+
+    func testSpeedKeepsLowFPSVideoAndAudioTimelinesInSync() throws {
+        let input = try speedClip(withAudio: true)
+        guard MediaConverter.tools(for: input).contains(.changeSpeed) else { throw XCTSkip("FFmpeg lacks MP4/AAC encoders.") }
+        for speed in [0.5, 2, 4] {
+            var settings = ConversionSettings()
+            settings.speed = speed
+            let output = try XCTUnwrap(MediaConverter.apply(.changeSpeed, to: input, settings: settings).outputs.first)
+            let probe = try XCTUnwrap(ProcessRunner.executable(named: "ffprobe"))
+            let json = try ProcessRunner.run(probe, arguments: ["-v", "error", "-show_entries", "stream=codec_type,duration:format=duration", "-of", "json", output.path], timeout: 10)
+            let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            let streams = try XCTUnwrap(object["streams"] as? [[String: Any]])
+            let video = try XCTUnwrap(streams.first { $0["codec_type"] as? String == "video" })
+            let audio = try XCTUnwrap(streams.first { $0["codec_type"] as? String == "audio" })
+            let videoDuration = try XCTUnwrap((video["duration"] as? String).flatMap(Double.init))
+            let audioDuration = try XCTUnwrap((audio["duration"] as? String).flatMap(Double.init))
+            XCTAssertEqual(videoDuration, 4 / speed, accuracy: 0.003)
+            // Tempo processing and AAC packet padding introduce a small audio tail.
+            XCTAssertEqual(audioDuration, 4 / speed, accuracy: 0.12)
+            XCTAssertEqual(audioDuration, videoDuration, accuracy: 0.12)
+        }
+    }
+
+    private func speedClip(withAudio: Bool = false) throws -> URL {
+        guard let ffmpeg = ProcessRunner.executable(named: "ffmpeg"), ProcessRunner.executable(named: "ffprobe") != nil else {
+            throw XCTSkip("FFmpeg and FFprobe are required for media checks.")
+        }
+        let colors = [CGColor(red: 1, green: 0, blue: 0, alpha: 1), CGColor(red: 0, green: 1, blue: 0, alpha: 1),
+                      CGColor(red: 0, green: 0, blue: 1, alpha: 1), CGColor(red: 1, green: 1, blue: 0, alpha: 1)]
+        for (index, color) in colors.enumerated() {
+            let context = try XCTUnwrap(CGContext(data: nil, width: 64, height: 48, bitsPerComponent: 8,
+                                                bytesPerRow: 64 * 4, space: CGColorSpaceCreateDeviceRGB(),
+                                                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+            context.setFillColor(color)
+            context.fill(CGRect(x: 0, y: 0, width: 64, height: 48))
+            let url = directory.appendingPathComponent("speed-\(index).png")
+            let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil))
+            CGImageDestinationAddImage(destination, try XCTUnwrap(context.makeImage()), nil)
+            XCTAssertTrue(CGImageDestinationFinalize(destination))
+        }
+        let output = directory.appendingPathComponent(withAudio ? "speed-av.mkv" : "speed-video.mkv")
+        var arguments = ["-hide_banner", "-loglevel", "error", "-nostdin", "-n", "-framerate", "1", "-i", directory.appendingPathComponent("speed-%d.png").path]
+        if withAudio {
+            let audio = directory.appendingPathComponent("speed-tone.wav")
+            try tone(duration: 4).write(to: audio)
+            arguments += ["-i", audio.path, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "pcm_s16le"]
+        }
+        arguments += ["-c:v", "mpeg4", "-threads", "2", "-t", "4", output.path]
+        _ = try ProcessRunner.run(ffmpeg, arguments: arguments, timeout: 10)
+        return output
+    }
+
+    private func tone(duration: Int) -> Data {
+        let sampleRate = 44_100, sampleCount = sampleRate * duration, sampleBytes = sampleCount * 2
+        var data = Data("RIFF".utf8)
+        func append16(_ value: UInt16) { var value = value.littleEndian; withUnsafeBytes(of: &value) { data.append(contentsOf: $0) } }
+        func append32(_ value: UInt32) { var value = value.littleEndian; withUnsafeBytes(of: &value) { data.append(contentsOf: $0) } }
+        append32(UInt32(36 + sampleBytes)); data.append(Data("WAVEfmt ".utf8)); append32(16)
+        append16(1); append16(1); append32(UInt32(sampleRate)); append32(UInt32(sampleRate * 2)); append16(2); append16(16)
+        data.append(Data("data".utf8)); append32(UInt32(sampleBytes))
+        for index in 0..<sampleCount {
+            let sample = Int16((sin(Double(index) * 2 * .pi * 440 / Double(sampleRate)) * 8_000).rounded())
+            append16(UInt16(bitPattern: sample))
+        }
+        return data
+    }
+
+    private func videoTimestamps(_ url: URL) throws -> [Double] {
+        let probe = try XCTUnwrap(ProcessRunner.executable(named: "ffprobe"))
+        let json = try ProcessRunner.run(probe, arguments: ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time", "-of", "json", url.path], timeout: 10)
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+        let packets = try XCTUnwrap(object["packets"] as? [[String: Any]])
+        return packets.compactMap { ($0["pts_time"] as? String).flatMap(Double.init) }
+    }
+
     private func clip() throws -> URL {
         guard let ffmpeg = ProcessRunner.executable(named: "ffmpeg"), ProcessRunner.executable(named: "ffprobe") != nil else {
             throw XCTSkip("FFmpeg and FFprobe are required for media checks.")

@@ -123,7 +123,24 @@ public enum MediaConverter {
                 throw OrangeError.invalidInput("Speed must be between 0.25× and 4×.")
             }
             var extra: [String] = []
-            if info.video != nil { extra += ["-filter:v", "setpts=PTS/\(number(settings.speed)),pad=ceil(iw/2)*2:ceil(ih/2)*2"] }
+            if info.video != nil {
+                // Changing only PTS leaves the original frame-rate and frame-duration
+                // metadata in place. At 1 fps an encoder can round 2× timestamps back
+                // to whole seconds, leaving playback unchanged. The FPS filter sets
+                // matching frame durations and the encoder's output timebase too.
+                let speed = number(settings.speed)
+                guard let frameRate = info.frameRate, frameRate.isFinite, frameRate > 0 else {
+                    throw OrangeError.invalidInput("This video's frame rate could not be read. Orange cannot safely change its speed.")
+                }
+                let outputFrameRate = frameRate * settings.speed
+                let fps = number(outputFrameRate)
+                guard outputFrameRate.isFinite, outputFrameRate > 0, outputFrameRate <= 4_000,
+                      let encodedRate = Double(fps), encodedRate > 0 else {
+                    throw OrangeError.invalidInput("This video's frame rate cannot be represented at the selected speed.")
+                }
+                extra += ["-filter:v", "setpts=(PTS-STARTPTS)/\(speed),fps=fps=\(fps):round=near,pad=ceil(iw/2)*2:ceil(ih/2)*2",
+                          "-fps_mode:v", "cfr"]
+            }
             if info.audio != nil { extra += ["-filter:a", tempoFilter(settings.speed)] }
             output = try transcode(input, to: defaultFormat, settings: settings, backend: backend, info: info, suffix: "-speed", extra: extra, customVideoFilter: true)
         case .extractAudio:
