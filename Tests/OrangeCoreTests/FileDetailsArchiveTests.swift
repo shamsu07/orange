@@ -67,4 +67,44 @@ final class FileDetailsArchiveTests: XCTestCase {
         XCTAssertThrowsError(try ArchiveConverter.create([first, second], to: .zip))
         XCTAssertFalse(try FileManager.default.contentsOfDirectory(atPath: root.path).contains { $0.hasSuffix(".zip") })
     }
+
+    func testArchiveRejectsFolderAndItsSelectedDescendantBeforeWritingEitherOrder() throws {
+        let folder = root.appendingPathComponent("selected-folder", isDirectory: true)
+        let nested = folder.appendingPathComponent("nested", isDirectory: true)
+        try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
+        let child = nested.appendingPathComponent("child.txt")
+        let original = Data("source stays intact".utf8)
+        try original.write(to: child)
+
+        for format in [OutputFormat.zip, .tar] {
+            for selection in [[folder, child], [child, folder]] {
+                XCTAssertThrowsError(try ArchiveConverter.create(selection, to: format)) { error in
+                    XCTAssertTrue(error.localizedDescription.contains("folder or its contents"))
+                }
+                XCTAssertEqual(try Data(contentsOf: child), original)
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: root.path), ["selected-folder"])
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: folder.path), ["nested"])
+                XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: nested.path), ["child.txt"])
+            }
+        }
+    }
+
+    func testArchiveAllowsSeparateItemsWhoseNamesShareAFolderPrefix() throws {
+        let folder = root.appendingPathComponent("photos", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let child = folder.appendingPathComponent("inside.txt")
+        let sibling = root.appendingPathComponent("photos-backup.txt")
+        try Data("inside".utf8).write(to: child)
+        try Data("outside".utf8).write(to: sibling)
+
+        let result = try ArchiveConverter.create([folder, sibling], to: .zip)
+        let output = try XCTUnwrap(result.outputs.first)
+        let unzip = try XCTUnwrap(ProcessRunner.executable(named: "unzip"))
+        let listing = try ProcessRunner.run(unzip, arguments: ["-Z1", output.path], currentDirectory: root)
+
+        XCTAssertTrue(listing.contains("photos/inside.txt"))
+        XCTAssertTrue(listing.contains("photos-backup.txt"))
+        XCTAssertEqual(try ProcessRunner.run(unzip, arguments: ["-p", output.path, "photos/inside.txt"], currentDirectory: root), "inside")
+        XCTAssertEqual(try ProcessRunner.run(unzip, arguments: ["-p", output.path, "photos-backup.txt"], currentDirectory: root), "outside")
+    }
 }

@@ -30,6 +30,15 @@ public enum ArchiveConverter {
         let directory = first.deletingLastPathComponent().standardizedFileURL
         let names = inputs.map(\.lastPathComponent)
         guard Set(names).count == names.count else { throw OrangeError.invalidInput("Selected items have the same name. Rename them before placing them in one archive so nothing is replaced.") }
+        for folder in inputs {
+            let values = try folder.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+            if values.isDirectory == true, values.isSymbolicLink != true {
+                let prefix = folder.standardizedFileURL.path + "/"
+                if inputs.contains(where: { $0.standardizedFileURL.path.hasPrefix(prefix) }) {
+                    throw OrangeError.invalidInput("Select a folder or its contents, rather than both, to create one archive.")
+                }
+            }
+        }
         // Prefixing every name prevents a filename beginning with '-' from becoming an option.
         let name = format == .zip ? "zip" : "tar"
         guard let executable = ProcessRunner.executable(named: name) else {
