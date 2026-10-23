@@ -3,6 +3,7 @@
 ## 0.1.6 — 2026-10-23
 
 - Splits the PDF reduction screen into focused views so it compiles with GitHub's macOS 15 Swift toolchain. The controls and conversion behavior are unchanged.
+- Stops presenting a successful “up to date” check as a Settings error.
 
 See [release notes](docs/releases/0.1.6.md).
 

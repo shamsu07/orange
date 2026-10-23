@@ -69,8 +69,19 @@ final class SparkleUpdateDriver: NSObject, UpdateDriver, SPUUpdaterDelegate, @pr
     }
 
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-        state.errorMessage = error.localizedDescription
+        state.errorMessage = Self.presentedError(error)
         publish()
+    }
+
+    /// Sparkle also ends successful no-update checks through its abort callback.
+    /// Its own dialog communicates that outcome; it is not a Settings error.
+    static func presentedError(_ error: Error) -> String? {
+        let issue = error as NSError
+        if issue.domain == SUSparkleErrorDomain,
+           [Int(SUError.noUpdateError.rawValue), Int(SUError.installationCanceledError.rawValue)].contains(issue.code) {
+            return nil
+        }
+        return error.localizedDescription
     }
 
     func updater(_ updater: SPUUpdater, shouldPostponeRelaunchForUpdate item: SUAppcastItem, untilInvokingBlock installHandler: @escaping () -> Void) -> Bool {
