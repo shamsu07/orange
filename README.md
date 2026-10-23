@@ -8,9 +8,9 @@ Orange aims to reproduce Tangerine's workflow, but **complete 1:1 parity is not 
 
 ## Install
 
-Download the DMG from [GitHub Releases](https://github.com/shamsu07/orange/releases/latest). The 0.1.5 release targets **Apple silicon and macOS 13 or later**. Intel and universal downloads are not provided. A packaged app needs no compiler or additional converter installation.
+Download the DMG from [GitHub Releases](https://github.com/shamsu07/orange/releases/latest). The 0.1.6 release targets **Apple silicon and macOS 13 or later**. Intel and universal downloads are not provided. A packaged app needs no compiler or additional converter installation.
 
-1. Open `Orange-0.1.5-macos-arm64.dmg`.
+1. Open `Orange-0.1.6-macos-arm64.dmg`.
 2. Drag **Orange** to **Applications**, eject the image, then open Orange from Applications.
 3. Choose the optional launch-at-login setting and click **Enable Orange**.
 
@@ -24,7 +24,7 @@ Orange 0.1.5 adds [Sparkle 2.10.0](https://github.com/sparkle-project/Sparkle/re
 
 Downloading and installation require your action. Orange verifies both the HTTPS update feed and downloaded archive with its embedded Ed25519 public key before installation; there are no silent installs. Installation waits for active work before relaunching. Checks contact GitHub Pages, and requested downloads contact GitHub Releases. These services receive ordinary network-request information, including your IP address; Orange disables Sparkle system profiling. File contents and file paths are not included in update requests.
 
-Versions through 0.1.4 have no updater. Install 0.1.5 once to receive future updates through Orange. An update signature does not make this release notarized.
+Versions through 0.1.4 have no updater. Install the latest version once to receive future updates through Orange. An update signature does not make this release notarized.
 
 ## Current features
 

@@ -118,60 +118,114 @@ struct PDFReductionOptionsView: View {
             Text("Reduce PDF size").font(.system(size: 22, weight: .semibold))
             Text("Best for scans and image-heavy documents. Each page becomes an image; the page dimensions stay the same.")
                 .font(.system(size: 13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Picker("Quality", selection: $model.preset) {
-                ForEach(PDFReductionPreset.allCases) { preset in Text(preset.rawValue).tag(preset) }
-            }.pickerStyle(.segmented).accessibilityLabel("PDF reduction quality")
+            qualityPicker
             Text(model.preset.detail).font(.system(size: 12)).foregroundStyle(.secondary)
-            ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
-                    ForEach(model.sources) { source in
-                        VStack(alignment: .leading, spacing: 8) {
-                            PDFSourceHeader(source: source)
-                            if let preview = model.previews.first(where: { $0.input == source.url }) {
-                                HStack(spacing: 10) {
-                                    Text(Self.size(preview.originalBytes)).foregroundStyle(.secondary)
-                                    Image(systemName: "arrow.right").foregroundStyle(.secondary)
-                                    Text(Self.size(preview.reducedBytes)).fontWeight(.semibold)
-                                        .foregroundStyle(preview.isSmaller ? Color.orange : Color.secondary)
-                                    Spacer()
-                                    if preview.isSmaller {
-                                        Text("\(Int((1 - Double(preview.reducedBytes) / Double(preview.originalBytes)) * 100))% smaller")
-                                            .font(.system(size: 12)).foregroundStyle(.secondary)
-                                    }
-                                }.font(.system(size: 20)).monospacedDigit()
-                                Text(preview.isSmaller ? "Measured preview · final size may vary slightly when saved." : "Already compact at this quality. This file will be skipped.")
-                                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                            } else if model.isPreparing {
-                                HStack { ProgressView().controlSize(.small); Text("Measuring a real PDF preview…").font(.system(size: 12)).foregroundStyle(.secondary) }
-                            }
-                        }.padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
-                    }
-                }.frame(maxWidth: .infinity, alignment: .leading)
-            }.frame(height: scrollHeight)
+            previewList
             if let error = model.error { Text(error).font(.system(size: 12)).foregroundStyle(.red) }
-            Toggle(isOn: $model.acceptsFlattening) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Create an image-based copy").font(.system(size: 13, weight: .semibold))
-                    Text("Text and vectors become pixels. Links, forms, annotations, accessibility tags and signatures are removed. Keep the original for editing and accessibility.")
-                        .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                }
-            }.toggleStyle(.checkbox).accessibilityIdentifier("pdf.reduction.consent")
-            HStack {
-                Text("Only smaller copies are saved.").font(.system(size: 12)).foregroundStyle(.secondary)
-                Spacer()
-                Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
-                Button(model.sources.count == 1 ? "Save smaller PDF" : "Save \(model.smallerCount) smaller PDFs", action: confirm)
-                    .keyboardShortcut(.defaultAction).disabled(model.selections == nil)
-            }
+            flatteningConsent
+            actions
         }.padding(24).frame(width: 550).tint(.orange)
             .onChange(of: model.preset) { _ in model.prepare() }
     }
+
+    private var qualityPicker: some View {
+        Picker("Quality", selection: $model.preset) {
+            ForEach(PDFReductionPreset.allCases) { preset in
+                Text(preset.rawValue).tag(preset)
+            }
+        }.pickerStyle(.segmented).accessibilityLabel("PDF reduction quality")
+    }
+
+    private var previewList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                ForEach(model.sources) { source in
+                    PDFReductionPreviewRow(
+                        source: source,
+                        preview: model.previews.first { $0.input == source.url },
+                        isPreparing: model.isPreparing
+                    )
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading)
+        }.frame(height: scrollHeight)
+    }
+
+    private var flatteningConsent: some View {
+        Toggle(isOn: $model.acceptsFlattening) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Create an image-based copy").font(.system(size: 13, weight: .semibold))
+                Text("Text and vectors become pixels. Links, forms, annotations, accessibility tags and signatures are removed. Keep the original for editing and accessibility.")
+                    .font(.system(size: 12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+        }.toggleStyle(.checkbox).accessibilityIdentifier("pdf.reduction.consent")
+    }
+
+    private var actions: some View {
+        HStack {
+            Text("Only smaller copies are saved.").font(.system(size: 12)).foregroundStyle(.secondary)
+            Spacer()
+            Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+            Button(saveTitle, action: confirm)
+                .keyboardShortcut(.defaultAction).disabled(model.selections == nil)
+        }
+    }
+
+    private var saveTitle: String {
+        model.sources.count == 1 ? "Save smaller PDF" : "Save \(model.smallerCount) smaller PDFs"
+    }
+
     private var scrollHeight: CGFloat {
         let preferred: CGFloat = model.sources.count == 1 ? 140 : 390
         let available = (NSScreen.main?.visibleFrame.height ?? 900) - 390
         return max(120, min(preferred, available))
     }
-    private static func size(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
+}
+
+private struct PDFReductionPreviewRow: View {
+    let source: PDFSourceSummary
+    let preview: DocumentConverter.ReductionPreview?
+    let isPreparing: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            PDFSourceHeader(source: source)
+            if let preview {
+                PDFReductionSizeComparison(preview: preview)
+                Text(preview.isSmaller ? "Measured preview · final size may vary slightly when saved." : "Already compact at this quality. This file will be skipped.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            } else if isPreparing {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text("Measuring a real PDF preview…").font(.system(size: 12)).foregroundStyle(.secondary)
+                }
+            }
+        }.padding(14).background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct PDFReductionSizeComparison: View {
+    let preview: DocumentConverter.ReductionPreview
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(size(preview.originalBytes)).foregroundStyle(.secondary)
+            Image(systemName: "arrow.right").foregroundStyle(.secondary)
+            Text(size(preview.reducedBytes)).fontWeight(.semibold)
+                .foregroundStyle(preview.isSmaller ? Color.orange : Color.secondary)
+            Spacer()
+            if preview.isSmaller {
+                Text("\(reductionPercentage)% smaller").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+        }.font(.system(size: 20)).monospacedDigit()
+    }
+
+    private var reductionPercentage: Int {
+        Int((1 - Double(preview.reducedBytes) / Double(preview.originalBytes)) * 100)
+    }
+
+    private func size(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
 }
 
 private struct PDFSourceHeader: View {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.6 — 2026-10-23
+
+- Splits the PDF reduction screen into focused views so it compiles with GitHub's macOS 15 Swift toolchain. The controls and conversion behavior are unchanged.
+
+See [release notes](docs/releases/0.1.6.md).
+
 ## 0.1.5 — 2026-10-23
 
 - Adds optional daily update checks, visible update controls, signed feed/archive verification and user-approved installation after active work finishes.
