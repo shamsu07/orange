@@ -46,7 +46,8 @@ final class ImageOptionsTests: XCTestCase {
     @MainActor func testDebounceDiscardsAnOlderEstimateAndCancelCannotPublish() async throws {
         let source = try fixture()
         let recorder = EstimateRecorder()
-        let preview = ImageEncodingPreviewModel(debounce: .milliseconds(40)) { _, _, settings in
+        let workers = PreviewTaskGroup()
+        let preview = ImageEncodingPreviewModel(taskGroup: workers, debounce: .milliseconds(40)) { _, _, settings in
             recorder.record(settings.maxDimension)
             return ImageConverter.EncodingPreview(originalBytes: 1000, encodedBytes: Int64(settings.maxDimension), dimensions: source.dimensions)
         }
@@ -54,12 +55,12 @@ final class ImageOptionsTests: XCTestCase {
         var second = first; second.maxDimension = 45
         preview.schedule(.resize, urls: [source.url], settings: first)
         preview.schedule(.resize, urls: [source.url], settings: second)
-        try await Task.sleep(for: .milliseconds(100))
+        await workers.drain()
         XCTAssertEqual(recorder.values, [45])
         XCTAssertEqual(preview.estimates[source.url]?.encodedBytes, 45)
         preview.schedule(.resize, urls: [source.url], settings: first)
         preview.cancel()
-        try await Task.sleep(for: .milliseconds(100))
+        await workers.drain()
         XCTAssertEqual(recorder.values, [45])
         XCTAssertTrue(preview.estimates.isEmpty)
         XCTAssertFalse(preview.isEstimating)
