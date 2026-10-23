@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.5 — 2026-10-23
+
+- Adds optional daily update checks, visible update controls, signed feed/archive verification and user-approved installation after active work finishes.
+- Adds the product website, native screenshots, separate usage guide and stable download link.
+- Adds contribution, security and conduct policies, dependency notices, pinned CI/Pages actions and signed release tooling. The release-signing key remains local.
+
+See [release notes](docs/releases/0.1.5.md). This release targets Apple silicon/macOS 13+, is ad hoc signed and is not notarized. Earlier versions need one manual installation to enable future updates.
+
+
 ## 0.1.4 — 2026-10-23
 
 - Add configurable tools per file family and shared action visibility; keep supported conversion choices fixed.

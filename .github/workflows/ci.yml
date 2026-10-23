@@ -15,11 +15,11 @@ concurrency:
 jobs:
   native:
     name: Native tests and release build
-    runs-on: macos-latest
+    runs-on: macos-15
     timeout-minutes: 30
     steps:
       - name: Check out source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -46,3 +46,24 @@ jobs:
         run: |
           codesign --verify --deep --strict build/Orange.app
           build/Orange.app/Contents/MacOS/Orange --self-check
+
+      - name: Verify real update signing boundaries
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
+  release-tooling:
+    name: Release tooling and local website links
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Test feed generation boundaries
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+      - name: Check local site links
+        run: python3 site/check.py

@@ -1,0 +1,172 @@
+name: Publish release
+
+# Publishing is an explicit maintainer action on reviewed main, never a PR action.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version already committed in Info.plist, for example 0.1.6'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orange-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      RELEASE_VERSION: ${{ inputs.version }}
+      PYTHONDONTWRITEBYTECODE: '1'
+      ORANGE_FFMPEG_JOBS: '3'
+    steps:
+      - name: Check out reviewed source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate release inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOSTED_SIGNING_CONFIGURED: ${{ secrets.SPARKLE_PRIVATE_KEY != '' }}
+        run: |
+          if [[ "$HOSTED_SIGNING_CONFIGURED" != true ]]; then
+            echo 'Hosted signing is not configured. Keep the key local and follow docs/releasing.md to publish from your Mac.' >&2
+            exit 1
+          fi
+          python3 - <<'PY'
+          import os, pathlib, plistlib, re
+          version = os.environ['RELEASE_VERSION']
+          if not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', version):
+              raise SystemExit('Use a stable numeric version such as 0.1.6.')
+          info = plistlib.loads(pathlib.Path('scripts/Info.plist').read_bytes())
+          if info['CFBundleShortVersionString'] != version:
+              raise SystemExit('The requested version does not match committed Info.plist.')
+          if not pathlib.Path(f'docs/releases/{version}.md').is_file():
+              raise SystemExit('Commit docs/releases/<version>.md before publishing.')
+          if not pathlib.Path('site/appcast.xml').is_file():
+              raise SystemExit('Publish the initial signed feed before using this workflow.')
+          if os.uname().machine != 'arm64':
+              raise SystemExit('This release workflow requires an arm64 runner.')
+          with open(os.environ['GITHUB_ENV'], 'a') as output:
+              output.write(f"RELEASE_BUILD={info['CFBundleVersion']}\n")
+          PY
+          if gh release view "v$RELEASE_VERSION" >/dev/null 2>&1; then
+            echo 'This release already exists. Do not replace a published app or update signature.' >&2
+            exit 1
+          fi
+          command -v pkg-config
+          swift --version
+      - name: Build pinned media backends
+        run: bash scripts/build-ffmpeg.sh
+      - name: Run native tests with the shipped backends
+        run: |
+          export ORANGE_BACKEND_DIR="$GITHUB_WORKSPACE/.cache/tools/bin"
+          export PATH="$ORANGE_BACKEND_DIR:$PATH"
+          bash scripts/test.sh
+      - name: Build and verify release app
+        run: |
+          bash scripts/build.sh
+          test "$(lipo -archs build/Orange.app/Contents/MacOS/Orange)" = arm64
+          codesign --verify --deep --strict build/Orange.app
+          build/Orange.app/Contents/MacOS/Orange --self-check
+      - name: Run release tooling tests
+        run: |
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+          python3 site/check.py
+      - name: Package the verified app
+        run: |
+          bash scripts/package.sh --no-build
+          cp "dist/Orange-$RELEASE_VERSION-macos-arm64.dmg" dist/Orange-macos-arm64.dmg
+          (
+            cd dist
+            shasum -a 256 "Orange-$RELEASE_VERSION-macos-arm64.dmg" "Orange-$RELEASE_VERSION-macos-arm64.zip" Orange-macos-arm64.dmg > SHA256SUMS
+            shasum -a 256 -c SHA256SUMS
+          )
+      - name: Sign and verify the update feed
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          python3 - <<'PY'
+          import os, pathlib
+          key = os.environ.get('SPARKLE_PRIVATE_KEY', '').strip()
+          if not key:
+              raise SystemExit('Configure the SPARKLE_PRIVATE_KEY repository secret before publishing.')
+          directory = pathlib.Path('.orange-secrets')
+          directory.mkdir(mode=0o700, exist_ok=True)
+          os.chmod(directory, 0o700)
+          path = directory / 'sparkle-ed25519.key'
+          descriptor = os.open(path, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+          with os.fdopen(descriptor, 'w') as output:
+              output.write(key + '\n')
+          PY
+          trap 'rm -f .orange-secrets/sparkle-ed25519.key' EXIT
+          python3 scripts/make-update-feed.py \
+            --archive "dist/Orange-$RELEASE_VERSION-macos-arm64.zip" \
+            --version "$RELEASE_VERSION" --build "$RELEASE_BUILD" \
+            --notes "docs/releases/$RELEASE_VERSION.md"
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v$RELEASE_VERSION" \
+            "dist/Orange-$RELEASE_VERSION-macos-arm64.dmg" \
+            "dist/Orange-$RELEASE_VERSION-macos-arm64.zip" \
+            dist/Orange-macos-arm64.dmg dist/SHA256SUMS site/appcast.xml \
+            --target "$GITHUB_SHA" --title "Orange $RELEASE_VERSION" \
+            --notes-file "docs/releases/$RELEASE_VERSION.md" --draft
+          gh release edit "v$RELEASE_VERSION" --draft=false --latest
+      - name: Commit the signed feed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 - <<'PY'
+          import base64, json, os, pathlib, subprocess
+          # GitHub's expected file SHA prevents overwriting a concurrently changed feed.
+          sha = subprocess.check_output(['git', 'rev-parse', 'HEAD:site/appcast.xml'], text=True).strip()
+          payload = {
+              'message': f"Publish {os.environ['RELEASE_VERSION']} update feed",
+              'branch': 'main', 'sha': sha,
+              'content': base64.b64encode(pathlib.Path('site/appcast.xml').read_bytes()).decode(),
+          }
+          pathlib.Path('.cache/feed-commit.json').write_text(json.dumps(payload))
+          PY
+          gh api --method PUT "repos/$GITHUB_REPOSITORY/contents/site/appcast.xml" \
+            --input .cache/feed-commit.json --jq '.commit.sha'
+          # GITHUB_TOKEN commits do not trigger another workflow. Deploy explicitly,
+          # using the current main website in case documentation changed during encoding.
+          git fetch --depth=1 origin main
+          git restore --source=FETCH_HEAD -- site
+          python3 site/check.py
+      - name: Upload signed website
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+      - name: Remove temporary signing material
+        if: always()
+        run: rm -f .orange-secrets/sparkle-ed25519.key
+
+  deploy:
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy signed feed and website
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
