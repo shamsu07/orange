@@ -1,6 +1,10 @@
 name: Bug report
 description: Report a reproducible failure in an implemented Orange workflow.
 body:
+  - type: markdown
+    attributes:
+      value: |
+        For a suspected security vulnerability, follow [SECURITY.md](https://github.com/shamsu07/orange/blob/main/SECURITY.md) instead of posting exploit details here. Use generated or non-private files, and remove personal paths from logs and screenshots.
   - type: textarea
     id: problem
     attributes:
@@ -19,7 +23,7 @@ body:
     id: environment
     attributes:
       label: Orange version, macOS version and Mac architecture
-      placeholder: Orange 0.1.0 local build; macOS version; arm64 or x86_64
+      placeholder: Orange release or commit; macOS version; arm64 or x86_64
     validations:
       required: true
   - type: textarea
@@ -31,4 +35,4 @@ body:
     id: evidence
     attributes:
       label: Additional evidence
-      description: Output inspection, screenshots or test results that help reproduce the failure.
+      description: Output inspection, screenshots or test results that help reproduce the failure. Remove account names, personal paths, document contents and other private information.

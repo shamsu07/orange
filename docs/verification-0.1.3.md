@@ -51,7 +51,7 @@ Repository-local logs:
 - `.cache/tests-0.1.3-final.log`
 - `.cache/build-0.1.3-final.log`
 
-The release-build log records a completed build of `build/Orange.app`. The live process was checked before requesting acceptance: only `/Users/shxms/dev/oss/orange/build/Orange.app/Contents/MacOS/Orange` was running, with no second Orange copy.
+The release-build log records a completed build of `build/Orange.app`. The live process was checked before requesting acceptance: only this repository's `build/Orange.app/Contents/MacOS/Orange` was running, with no second Orange copy.
 
 ## Native acceptance — failed
 

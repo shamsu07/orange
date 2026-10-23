@@ -12,7 +12,7 @@ body:
     id: observed
     attributes:
       label: Observed reference behavior
-      description: Give exact steps and the visible result. Link screenshots or non-private fixtures when useful.
+      description: Give exact steps and the visible result. Use your own screenshots or non-private fixtures, remove personal information, and do not submit proprietary reference-app code or assets.
     validations:
       required: true
   - type: textarea
