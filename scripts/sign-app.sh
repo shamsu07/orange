@@ -12,9 +12,11 @@ framework="$app/Contents/Frameworks/Sparkle.framework"
 [[ -d "$framework" ]] || { printf 'Sparkle must be embedded before signing.\n' >&2; exit 1; }
 # Sign nested helpers before their containing bundles. Never use --deep to sign.
 for service in Installer Downloader; do
-    extra=()
-    [[ "$service" != Downloader ]] || extra+=(--preserve-metadata=entitlements)
-    codesign "${flags[@]}" "${extra[@]}" "$framework/Versions/B/XPCServices/$service.xpc"
+    if [[ "$service" == Downloader ]]; then
+        codesign "${flags[@]}" --preserve-metadata=entitlements "$framework/Versions/B/XPCServices/$service.xpc"
+    else
+        codesign "${flags[@]}" "$framework/Versions/B/XPCServices/$service.xpc"
+    fi
 done
 codesign "${flags[@]}" "$framework/Versions/B/Autoupdate"
 codesign "${flags[@]}" "$framework/Versions/B/Updater.app"

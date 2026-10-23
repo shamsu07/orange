@@ -4,6 +4,7 @@
 
 - Splits the PDF reduction screen into focused views so it compiles with GitHub's macOS 15 Swift toolchain. The controls and conversion behavior are unchanged.
 - Stops presenting a successful “up to date” check as a Settings error.
+- Supports macOS's default Bash in the signing helper and removes a timing assumption from preview tests.
 
 See [release notes](docs/releases/0.1.6.md).
 
