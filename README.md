@@ -65,7 +65,9 @@ open build/Orange.app
 PATH="$PWD/.cache/tools/bin:$PATH" bash scripts/test.sh
 ```
 
-The 0.1.4 fully enabled local suite passed **198 tests, zero failures and zero skips**, without compiler warnings; the final PDF text layout received focused checks and a native recheck. This is historical evidence for that version, not a test result for later changes. See [verification](docs/verification-0.1.4.md) and each release's notes for subsequent checks. Caches and test fixtures stay inside the repository. Native Vision/CoreVideo/audio integration needs normal macOS service access. Without FFmpeg, media integration coverage explicitly skips unavailable routes. The [CI workflow](.github/workflows/ci.yml) runs tests, a release build, signing verification and self-check; a workflow file is not a hosted pass.
+The 0.1.6 local suite passed **212 tests, zero failures and zero skips** with the shipped media backend. Ten release-tooling tests passed, including real signatures and tampering rejection. The real public 0.1.5 → 0.1.6 download, installation and relaunch flow was verified. See [release verification](docs/verification-0.1.6.md) and the [passing hosted CI](https://github.com/shamsu07/orange/actions/runs/39919775973).
+
+Caches and generated test fixtures stay inside the repository. Native Vision/CoreVideo/audio integration needs normal macOS service access. Without FFmpeg, optional media checks explicitly skip; hosted default CI had 10 such skips. The packaged release includes the tested backend. The [CI workflow](.github/workflows/ci.yml) checks source tests, a release build, signing, self-check, release tooling and website links.
 
 The app includes the repository-local backend when available. `bash scripts/build-ffmpeg.sh` explicitly downloads pinned official sources and builds FFmpeg/libwebp inside Orange. See [backend build notes](docs/ffmpeg-build.md). The application itself never downloads converters.
 

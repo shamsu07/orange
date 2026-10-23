@@ -31,4 +31,4 @@ Maintainers should reproduce and assess reports privately, agree on a disclosure
 - Orange is not an isolation sandbox for hostile documents. Keep macOS and converter dependencies updated, and avoid opening untrusted files on systems containing sensitive data.
 - A valid local signature or published checksum checks specific integrity properties. It is not a security audit or a notarization claim. Consult the release notes for each artifact's actual signing and notarization status.
 
-For implementation details and remaining qualification gaps, see [architecture](docs/architecture.md) and the [verification reports](docs/verification-0.1.4.md). Ordinary feature requests and non-security bugs belong in [GitHub issues](https://github.com/shamsu07/orange/issues).
+For implementation details and remaining qualification gaps, see [architecture](docs/architecture.md) and the [verification reports](docs/verification-0.1.6.md). Ordinary feature requests and non-security bugs belong in [GitHub issues](https://github.com/shamsu07/orange/issues).
