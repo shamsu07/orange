@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+  <channel>
+    <title>Orange updates</title>
+    <link>https://shamsu07.github.io/orange/</link>
+    <description>Stable Orange releases for macOS.</description>
+    <language>en</language>
+    <item>
+      <title>Orange 0.1.5</title>
+      <pubDate>Fri, 23 Oct 2026 07:17:33 +0000</pubDate>
+      <sparkle:version>6</sparkle:version>
+      <sparkle:shortVersionString>0.1.5</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>13.0</sparkle:minimumSystemVersion>
+      <link>https://github.com/shamsu07/orange/releases/tag/v0.1.5</link>
+      <description>&lt;p&gt;Orange 0.1.5 adds in-app updates and the public project website.&lt;/p&gt;&lt;p&gt;- Check for updates from the menu bar or the new Updates tab in Settings.&lt;br&gt;- Optional daily checks show an Update button without opening background windows.&lt;br&gt;- Review and install updates when ready. Orange verifies the feed and download with its update signing key and waits for active conversions and moves before relaunching.&lt;br&gt;- Open the product website for screenshots, downloads and a separate usage guide.&lt;br&gt;- Adds contribution, security and conduct guidance, complete Sparkle license notices, pinned dependencies and a maintainer release workflow.&lt;/p&gt;&lt;p&gt;Requires an Apple silicon Mac running macOS 13 or later. The download includes the media converters; no compiler or separate installation is needed.&lt;/p&gt;&lt;p&gt;This early release is ad hoc signed and is not notarized by Apple. macOS may block it. Orange 0.1.4 and earlier need one manual installation of this version to receive future in-app updates. Full Tangerine feature parity has not been established.&lt;/p&gt;</description>
+      <enclosure url="https://github.com/shamsu07/orange/releases/download/v0.1.5/Orange-0.1.5-macos-arm64.zip" length="40765260" type="application/octet-stream" sparkle:edSignature="ZfTbrzJJazkAx7fy88KF1rE/nd+wv356IUUlQSUv3izDrWXddItK1ssHk1yW06mGL2vkDiqDbtlv8FovOWbmBg=="></enclosure>
+    </item>
+  </channel>
+</rss><!-- sparkle-signatures:
+edSignature: vZ5FsLTCnypJiZ6Wv1dB8cEGX4r2E1ERkCYJ69H7HNAzz1f6Gre5cdodGt9JCTGu0BQk1PUSr1poVFgbbdZTBg==
+length: 2399
+-->
