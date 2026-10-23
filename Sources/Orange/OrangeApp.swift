@@ -7,15 +7,16 @@ import ImageIO
 @main
 struct OrangeApplication {
     @MainActor static func main() {
-        if CommandLine.arguments.contains("--version") { print("Orange 0.1.4"); return }
+        if CommandLine.arguments.contains("--version") { print("Orange \(AppVersion.current)"); return }
         if CommandLine.arguments.contains("--self-check") {
             let report: [String: Any] = [
-                "version": "0.1.4",
+                "version": AppVersion.current,
                 "minimum_macos": "13.0",
                 "image_encoders": CGImageDestinationCopyTypeIdentifiers() as? [String] ?? [],
                 "ffmpeg_available": ProcessRunner.executable(named: "ffmpeg") != nil,
                 "ffprobe_available": ProcessRunner.executable(named: "ffprobe") != nil,
-                "ui_verification": "Not covered by this binary smoke check"
+                "ui_verification": "Not covered by this binary smoke check",
+                "signed_update_configuration": (try? UpdateConfiguration(info: Bundle.main.infoDictionary ?? [:])) != nil
             ]
             if let data = try? JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]), let json = String(data: data, encoding: .utf8) { print(json) }
             return
@@ -29,8 +30,9 @@ struct OrangeApplication {
     }
 }
 
-@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSMenuItemValidation {
     let model = AppModel()
+    private let updates = UpdateController()
     private let login = LaunchAtLogin()
     private var statusItem: NSStatusItem?
     private var window: NSWindow?
@@ -41,6 +43,7 @@ struct OrangeApplication {
     private var feedbackDismissal: DispatchWorkItem?
     private var wheel: DragWheelController?
     private var floatWindows: [NSWindow] = []
+    private var updateMenuItems: [NSMenuItem] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.applicationIconImage = OrangeArtwork.appIcon(size: 256)
@@ -52,6 +55,7 @@ struct OrangeApplication {
         menu.addItem(withTitle: "Open Orange…", action: #selector(openWindow), keyEquivalent: "o").target = self
         menu.addItem(withTitle: "Choose Files…", action: #selector(chooseFiles), keyEquivalent: "n").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(openPreferences), keyEquivalent: ",").target = self
+        addUpdateItem(to: menu)
         menu.addItem(.separator())
         let wheelItem = menu.addItem(withTitle: "Finder wheels enabled", action: #selector(toggleWheel(_:)), keyEquivalent: "")
         wheelItem.state = model.wheelEnabled ? .on : .off
@@ -61,6 +65,9 @@ struct OrangeApplication {
         item.menu = menu
         statusItem = item
         installMainMenu()
+        updates.isBusy = { [weak self] in self?.model.hasWorkInProgress ?? false }
+        updates.onChange = { [weak self] in self?.refreshUpdateItems() }
+        model.onWorkStateChange = { [weak self] in self?.updates.workStateDidChange() }
         model.onShowWindow = { [weak self] in self?.openWindow() }
         model.onBeginFinderInteraction = { [weak self] in
             self?.window?.orderOut(nil)
@@ -71,7 +78,7 @@ struct OrangeApplication {
         model.onPreviewWheel = { [weak self] in self?.wheel?.preview() }
         model.onFloat = { [weak self] urls in self?.showFloat(urls) }
         wheel = DragWheelController(model: model)
-        if model.setupCompleted { wheel?.start() }
+        if model.setupCompleted { wheel?.start(); updates.start() }
         else { showOnboarding() }
     }
 
@@ -101,7 +108,7 @@ struct OrangeApplication {
     @objc func openWindow() {
         guard model.setupCompleted else { showOnboarding(); return }
         if window == nil {
-            let view = MainView(model: model)
+            let view = MainView(model: model, updates: updates)
             let controller = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: controller)
             window.title = "Orange"
@@ -123,7 +130,7 @@ struct OrangeApplication {
     }
     @objc func openPreferences() {
         if preferencesWindow == nil {
-            let controller = NSHostingController(rootView: PreferencesView(model: model, login: login))
+            let controller = NSHostingController(rootView: PreferencesView(model: model, login: login, updates: updates))
             let window = NSWindow(contentViewController: controller)
             window.title = "Orange Settings"
             window.styleMask = [.titled, .closable, .miniaturizable]
@@ -142,6 +149,7 @@ struct OrangeApplication {
                 guard let self else { return }
                 self.model.setupCompleted = true
                 self.wheel?.start()
+                self.updates.start()
                 self.onboardingWindow?.close()
                 if let message = self.login.registrationMessage { self.model.showFeedback(message) }
             }
@@ -193,6 +201,7 @@ struct OrangeApplication {
         let main = NSMenu()
         let appMenu = NSMenu(title: "Orange")
         appMenu.addItem(withTitle: "Settings…", action: #selector(openPreferences), keyEquivalent: ",").target = self
+        addUpdateItem(to: appMenu)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Orange", action: #selector(quit), keyEquivalent: "q").target = self
         let appItem = main.addItem(withTitle: "Orange", action: nil, keyEquivalent: "")
@@ -214,12 +223,34 @@ struct OrangeApplication {
         sender.state = model.wheelEnabled ? .on : .off
     }
     @objc func quit() { NSApp.terminate(nil) }
+    @objc private func checkForUpdates() { updates.checkForUpdates() }
+
+    private func addUpdateItem(to menu: NSMenu) {
+        let item = menu.addItem(withTitle: updates.buttonTitle, action: #selector(checkForUpdates), keyEquivalent: "")
+        item.target = self
+        updateMenuItems.append(item)
+    }
+
+    private func refreshUpdateItems() {
+        for item in updateMenuItems {
+            item.title = updates.buttonTitle
+            item.isEnabled = updates.canCheckForUpdates && !updates.installationWaitingForWork
+        }
+        statusItem?.button?.toolTip = updates.availableVersion.map { "Orange · Update to \($0) available" } ?? "Orange · Local file converter"
+    }
 
     func menuWillOpen(_ menu: NSMenu) {
         for item in menu.items where item.action == #selector(toggleWheel(_:)) {
             item.title = model.setupCompleted ? "Finder wheels enabled" : "Finish setting up Orange…"
             item.state = model.setupCompleted && model.wheelEnabled ? .on : .off
         }
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(checkForUpdates) {
+            return updates.canCheckForUpdates && !updates.installationWaitingForWork
+        }
+        return true
     }
 
     private func showFloat(_ urls: [URL]) {

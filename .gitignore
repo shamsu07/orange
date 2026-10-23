@@ -7,3 +7,5 @@ xcuserdata/
 .vscode/
 
 dist/
+/.orange-secrets/
+__pycache__/

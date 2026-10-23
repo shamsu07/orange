@@ -28,14 +28,11 @@ if [[ -x "$project_root/.cache/tools/bin/ffmpeg" && -x "$project_root/.cache/too
             cp -R "$project_root/.cache/tools/$entry" "$app/Contents/Resources/Tools/"
         fi
     done
-    for tool in ffmpeg ffprobe; do
-        codesign --force --sign "${ORANGE_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Resources/Tools/bin/$tool"
-    done
 fi
+bash "$project_root/scripts/embed-sparkle.sh" "$app"
 "$binary_directory/OrangeIconGenerator" "$project_root/build"
 iconutil --convert icns "$project_root/build/Orange.iconset" --output "$app/Contents/Resources/Orange.icns"
-codesign --force --sign "${ORANGE_SIGN_IDENTITY:--}" --timestamp=none "$app"
-codesign --verify --deep --strict "$app"
+bash "$project_root/scripts/sign-app.sh" "$app"
 mkdir -p "$project_root/build"
 rm -rf "$project_root/build/Orange.app"
 mv "$app" "$project_root/build/Orange.app"

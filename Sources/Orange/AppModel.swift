@@ -105,8 +105,15 @@ private struct ShortcutBindings {
     var onPreviewWheel: (() -> Void)?
     var onFloat: (([URL]) -> Void)?
     private let limiter = WorkLimiter.shared
-    private var tasks: [UUID: Task<Void, Never>] = [:]
-    private var moveTasks: [UUID: Task<Void, Never>] = [:]
+    var onWorkStateChange: (() -> Void)?
+    private var tasks: [UUID: Task<Void, Never>] = [:] {
+        didSet { onWorkStateChange?() }
+    }
+    private var moveTasks: [UUID: Task<Void, Never>] = [:] {
+        didSet { onWorkStateChange?() }
+    }
+    /// Includes workers releasing their permits and cross-volume file moves.
+    var hasWorkInProgress: Bool { !tasks.isEmpty || !moveTasks.isEmpty }
     private var capabilityTask: Task<Void, Never>?
     private var isShuttingDown = false
 

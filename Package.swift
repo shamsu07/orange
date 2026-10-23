@@ -10,12 +10,17 @@ let package = Package(
         .executable(name: "OrangeIconGenerator", targets: ["OrangeIconGenerator"]),
         .library(name: "OrangeCore", targets: ["OrangeCore"])
     ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle.git", exact: "2.10.0")
+    ],
     targets: [
         .target(name: "OrangeCore"),
         .target(name: "OrangeArtwork"),
-        .executableTarget(name: "Orange", dependencies: ["OrangeCore", "OrangeArtwork"]),
-        .executableTarget(name: "OrangeIconGenerator", dependencies: ["OrangeArtwork"], path: "scripts",
-                          exclude: ["Info.plist", "build.sh", "test.sh", "package.sh", "build-ffmpeg.sh", "benchmark.sh"], sources: ["MakeIcon.swift"]),
+        .executableTarget(
+            name: "Orange",
+            dependencies: ["OrangeCore", "OrangeArtwork", .product(name: "Sparkle", package: "Sparkle")],
+            linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])]),
+        .executableTarget(name: "OrangeIconGenerator", dependencies: ["OrangeArtwork"]),
         .executableTarget(name: "OrangeBench", dependencies: ["OrangeCore"]),
         .testTarget(name: "OrangeCoreTests", dependencies: ["OrangeCore"]),
         .testTarget(name: "OrangeAppTests", dependencies: ["Orange"])

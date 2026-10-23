@@ -6,6 +6,7 @@ import OrangeCore
 struct PreferencesView: View {
     @ObservedObject var model: AppModel
     @ObservedObject var login: LaunchAtLogin
+    @ObservedObject var updates: UpdateController
     @State private var mediaBackend: MediaBackendState = .checking
 
     private let tint = Color(red: 1, green: 0.584, blue: 0)
@@ -18,6 +19,8 @@ struct PreferencesView: View {
                 .tabItem { Label("Formats", systemImage: "doc.on.doc") }
             menus
                 .tabItem { Label("Menus", systemImage: "circle.grid.2x2") }
+            updateSettings
+                .tabItem { Label("Updates", systemImage: "arrow.down.circle") }
             compatibility
                 .tabItem { Label("Compatibility", systemImage: "checkmark.shield") }
             about
@@ -263,18 +266,20 @@ struct PreferencesView: View {
                 .accessibilityHidden(true)
             Text("Orange")
                 .font(.system(size: 28, weight: .semibold, design: .rounded))
-            Text("Version 0.1.4")
+            Text("Version \(AppVersion.current)")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Text("Open-source file conversion for macOS.")
                 .font(.body)
-            Text("Files are processed locally. No accounts, uploads, analytics or automatic downloads.")
+            Text("Files are processed on this Mac. Optional update checks contact GitHub. Updates download only when you choose to install them. No accounts or analytics.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
             Link("MIT License", destination: URL(string: "https://opensource.org/license/mit/")!)
                 .padding(.top, 4)
+            Link("Sparkle · MIT License", destination: URL(string: "https://sparkle-project.org/")!)
+                .font(.caption)
             if mediaBackend == .detected {
                 Link("FFmpeg · LGPL 2.1 or later", destination: URL(string: "https://ffmpeg.org/")!)
                     .font(.caption)
@@ -295,6 +300,45 @@ struct PreferencesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding(24)
+    }
+
+    private var updateSettings: some View {
+        Form {
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(updates.availableVersion.map { "Orange \($0) is available" } ?? "Orange \(AppVersion.current)")
+                            .fontWeight(.medium)
+                        if let date = updates.lastChecked {
+                            Text("Last checked \(date.formatted(date: .abbreviated, time: .shortened))")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    Button(updates.buttonTitle) { updates.checkForUpdates() }
+                        .disabled(!updates.canCheckForUpdates || updates.installationWaitingForWork)
+                }
+                Toggle("Check for updates automatically", isOn: Binding(
+                    get: { updates.automaticallyChecks },
+                    set: { updates.setAutomaticallyChecks($0) }))
+                    .disabled(!model.setupCompleted)
+                if updates.installationWaitingForWork {
+                    Text("The update will restart Orange after the current operations finish.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                if let error = updates.errorMessage {
+                    Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
+                }
+            } header: { Text("Keep Orange up to date") }
+              footer: {
+                Text("Checks run at most daily while Orange is open. A new version adds an Update button; background checks never open a window. You choose when to download, install and restart. Updates and their feed are verified with Orange's update signing key.")
+            }
+            Section("Privacy") {
+                Text("Update checks contact shamsu07.github.io. Downloads come from GitHub Releases. GitHub receives ordinary connection information such as your IP address. Your selected files stay on this Mac. System profiling is disabled.")
+                    .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                Link("Release notes on GitHub", destination: URL(string: "https://github.com/shamsu07/orange/releases")!)
+            }
+        }.formStyle(.grouped)
     }
 
     private enum MediaBackendState {

@@ -1,0 +1,27 @@
+* text=auto eol=lf
+
+*.swift text
+*.sh text
+*.md text
+*.yml text
+*.yaml text
+*.json text
+*.html text
+*.css text
+*.js text
+*.svg text
+*.plist text
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.icns binary
+*.pdf binary
+*.mp4 binary
+*.mov binary
+*.zip binary
+*.dmg binary
+*.woff2 binary
+licenses/*.txt -whitespace

@@ -6,6 +6,7 @@ private let orange = Color(red: 1, green: 0.584, blue: 0)
 
 struct MainView: View {
     @ObservedObject var model: AppModel
+    @ObservedObject var updates: UpdateController
     @State private var tab = "Convert"
     @State private var dropTarget = false
 
@@ -18,6 +19,11 @@ struct MainView: View {
                     Text("Your files. A little more useful.").font(.system(size: 11)).foregroundStyle(.secondary)
                 }
                 Spacer()
+                if updates.availableVersion != nil {
+                    Button(updates.buttonTitle) { updates.checkForUpdates() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!updates.canCheckForUpdates || updates.installationWaitingForWork)
+                }
                 Label("On this Mac", systemImage: "lock.shield").font(.system(size: 11, weight: .medium)).foregroundStyle(.secondary)
                     .padding(.horizontal, 10).padding(.vertical, 6).background(.quaternary.opacity(0.5), in: Capsule())
             }

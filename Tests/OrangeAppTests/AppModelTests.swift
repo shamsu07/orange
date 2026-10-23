@@ -22,6 +22,9 @@ final class AppModelTests: XCTestCase {
         let original = try Data(contentsOf: input)
         let resizePresenter = TestResizePresenter()
         let model = AppModel(persistPreferences: false, resizePresenter: resizePresenter)
+        var workStates: [Bool] = []
+        model.onWorkStateChange = { [weak model] in workStates.append(model?.hasWorkInProgress ?? false) }
+        XCTAssertFalse(model.hasWorkInProgress)
         // Only session values change. No real app preference or login setting is written.
         model.revealOnCompletion = false
         model.soundFeedback = false
@@ -46,6 +49,9 @@ final class AppModelTests: XCTestCase {
         }
         XCTAssertEqual(try Data(contentsOf: input), original)
         await model.shutdown()
+        XCTAssertEqual(workStates.first, true, "Update installation must see queued work immediately.")
+        XCTAssertEqual(workStates.last, false, "Installation may resume only after all workers release their permits.")
+        XCTAssertFalse(model.hasWorkInProgress)
     }
     @MainActor func testControlCopyPathAndFloatAreActuallyDispatched() async {
         let board = NSPasteboard.withUniqueName()

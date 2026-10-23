@@ -76,6 +76,8 @@ if [[ "$(plutil -extract OrangeWheelTrace raw -o - "$PACKAGE_APP/Contents/Info.p
     fail "Refusing to package a wheel-diagnostics build. Build the release app first."
 fi
 codesign --verify --deep --strict "$PACKAGE_APP"
+[[ -f "$PACKAGE_APP/Contents/Resources/Licenses/Sparkle.txt" ]] || fail "The Sparkle license is missing."
+[[ -x "$PACKAGE_APP/Contents/Frameworks/Sparkle.framework/Sparkle" ]] || fail "The updater framework is missing."
 PACKAGE_VERSION="$(plutil -extract CFBundleShortVersionString raw -o - "$PACKAGE_APP/Contents/Info.plist")"
 case "$PACKAGE_VERSION" in ''|*[!A-Za-z0-9._-]*) fail "The app version cannot be used safely in release filenames." ;; esac
 PACKAGE_ARCHS="$(lipo -archs "$PACKAGE_APP/Contents/MacOS/Orange")"
@@ -122,12 +124,7 @@ if [[ -n "$PACKAGE_IDENTITY" ]]; then
     if [[ "$PACKAGE_IDENTITY" == - ]]; then
         fail "Leave ORANGE_SIGN_IDENTITY unset to retain ad hoc signing; use a Developer ID identity for distribution signing."
     fi
-    for tool in ffmpeg ffprobe; do
-        if [[ -f "$PACKAGE_TOOLS/bin/$tool" ]]; then
-            codesign --force --options runtime --timestamp --sign "$PACKAGE_IDENTITY" "$PACKAGE_TOOLS/bin/$tool"
-        fi
-    done
-    codesign --force --options runtime --timestamp --sign "$PACKAGE_IDENTITY" "$PACKAGE_STAGED_APP"
+    bash "$PACKAGE_ROOT/scripts/sign-app.sh" "$PACKAGE_STAGED_APP"
 fi
 codesign --verify --deep --strict "$PACKAGE_STAGED_APP"
 
